@@ -1,5 +1,5 @@
 ---
-name: Test Generation
+name: test-generation
 description: Generate a targeted test checklist for each impacted module based on the nature of the change and the module's role in the system
 ---
 
