@@ -1,3 +1,8 @@
+---
+name: Diagram Extraction
+description: Extract a structured list of modules and dependencies from an architecture diagram image or Mermaid code string
+---
+
 # Skill: Diagram Extraction
 
 ## Purpose

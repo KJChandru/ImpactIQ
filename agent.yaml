@@ -1,7 +1,8 @@
 name: impactiq
 version: 0.1.0
 description: AI-powered architectural impact analysis agent
-model: claude-sonnet-4-6
+model:
+  preferred: "anthropic:claude-sonnet-4-6"
 framework: gitagent
 spec_version: "0.1.7"
 

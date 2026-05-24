@@ -1,3 +1,8 @@
+---
+name: Impact Analysis
+description: Trace the dependency graph to compute blast radius and generate a structured impact report for a proposed feature
+---
+
 # Skill: Impact Analysis
 
 ## Purpose
