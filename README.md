@@ -14,7 +14,7 @@ Engineers ship features that silently break other parts of the system. The blast
 
 ## Live Demo
 
-**[https://impactiq.vercel.app]([https://impactiq.vercel.app](https://impactiq-three.vercel.app/))** ← _Update after deploy_
+Live Demo: https://impactiq-three.vercel.app/
 
 Click **"Try the demo"** on the landing page to see a full OAuth migration impact report instantly — no API key needed.
 
