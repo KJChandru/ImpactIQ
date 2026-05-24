@@ -87,30 +87,9 @@ export function Sidebar({ current }: Props) {
         })}
       </nav>
 
-      {/* System status */}
-      <div className="px-4 py-4 border-t border-zinc-800">
-        <div className="text-[9px] font-mono font-bold uppercase tracking-widest text-zinc-600 mb-3">
-          System Status
-        </div>
-        <div className="flex flex-col gap-2">
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] font-mono text-zinc-500">ANALYZER_CORE</span>
-            <span className="text-[10px] font-mono text-emerald-400 font-bold">READY</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] font-mono text-zinc-500">MODEL</span>
-            <span className="text-[10px] font-mono text-zinc-300">SONNET_4.6</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] font-mono text-zinc-500">AGENT</span>
-            <span className="text-[10px] font-mono text-violet-400">ACTIVE</span>
-          </div>
-        </div>
-      </div>
-
       {/* CTA */}
       {current !== "upload" && (
-        <div className="px-3 pb-4">
+        <div className="px-3 pb-4 border-t border-zinc-800 pt-4">
           <button
             onClick={reset}
             className="w-full py-2.5 bg-white hover:bg-zinc-100 text-zinc-950 text-[10px] font-mono font-bold uppercase tracking-wider rounded transition-colors"
