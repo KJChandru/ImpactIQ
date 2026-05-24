@@ -138,6 +138,8 @@ export async function callWithTools(
   ];
 
   const allToolCallResults: ToolCallResult[] = [];
+  let toolRounds = 0;
+  const MAX_TOOL_ROUNDS = 8;
 
   while (true) {
     const response = await client.messages.create({
@@ -182,5 +184,13 @@ export async function callWithTools(
     }
 
     messages.push({ role: "user", content: toolResults });
+
+    if (++toolRounds >= MAX_TOOL_ROUNDS) {
+      const finalText = response.content
+        .filter((b) => b.type === "text")
+        .map((b) => (b as Anthropic.TextBlock).text)
+        .join("\n");
+      return { text: finalText, toolCallResults: allToolCallResults };
+    }
   }
 }

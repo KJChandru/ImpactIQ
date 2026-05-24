@@ -17,8 +17,16 @@ interface IterationResponse {
 }
 
 function parseJsonFromText(text: string): unknown {
-  const cleaned = text.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-  return JSON.parse(cleaned);
+  const stripped = text.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    // Fallback: extract first {...} block from prose
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start !== -1 && end > start) return JSON.parse(text.slice(start, end + 1));
+    throw new Error("No valid JSON found in response");
+  }
 }
 
 function parseIterationResponse(text: string): IterationResponse {
@@ -100,7 +108,10 @@ export async function runAgentLoop(
 
   let report: Omit<ImpactReport, "iterationHistory" | "agentConfidence">;
   try {
-    report = parseJsonFromText(reportText) as typeof report;
+    const parsed = parseJsonFromText(reportText) as typeof report;
+    const isValid = parsed && Array.isArray((parsed as any).impacted) && typeof (parsed as any).blastRadius === "number";
+    if (!isValid) throw new Error("Report shape invalid");
+    report = parsed;
   } catch {
     // Fallback: build report from accumulated memory
     report = {
