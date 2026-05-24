@@ -1,0 +1,46 @@
+name: extract_architecture
+description: Extract modules and dependencies from an architecture diagram image or Mermaid code
+endpoint: /api/extract
+method: POST
+content_type: application/json
+
+input_schema:
+  type: object
+  properties:
+    image:
+      type: string
+      description: Base64-encoded architecture diagram image (PNG or JPEG)
+    mediaType:
+      type: string
+      enum: [image/jpeg, image/png, image/gif, image/webp]
+      description: MIME type of the image (required if image is provided)
+    mermaid:
+      type: string
+      description: Mermaid graph code string
+  oneOf:
+    - required: [image]
+    - required: [mermaid]
+
+output_schema:
+  type: object
+  properties:
+    modules:
+      type: array
+      items:
+        type: string
+      description: List of extracted module/service names
+    dependencies:
+      type: array
+      items:
+        type: object
+        properties:
+          from:
+            type: string
+          to:
+            type: string
+          type:
+            type: string
+    confidence:
+      type: number
+      description: Confidence score 0-1 for the extraction accuracy
+  required: [modules, dependencies, confidence]

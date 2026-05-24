@@ -1,0 +1,23 @@
+name: impactiq
+version: 0.1.0
+description: AI-powered architectural impact analysis agent
+model: claude-sonnet-4-6
+framework: gitagent
+spec_version: "0.1.7"
+
+entrypoint: workflows/impact-flow.yaml
+
+skills:
+  - skills/diagram-extraction
+  - skills/impact-analysis
+  - skills/test-generation
+
+tools:
+  - tools/extract.yaml
+  - tools/analyze.yaml
+
+knowledge:
+  - knowledge/
+
+memory:
+  runtime: memory/runtime/

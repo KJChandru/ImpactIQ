@@ -1,0 +1,73 @@
+name: impact-flow
+description: Deterministic pipeline for architectural impact analysis with confidence-gated agentic loop
+version: "1.1"
+type: SkillsFlow
+
+steps:
+  - id: upload
+    name: Upload Architecture
+    description: User uploads architecture diagram (image, Mermaid code, or SQL DDL schema)
+    type: input
+    accepts:
+      - image/jpeg
+      - image/png
+      - image/gif
+      - image/webp
+      - text/mermaid
+      - text/sql
+    output: raw_input
+
+  - id: extract
+    name: Extract Architecture
+    description: Claude Vision or Mermaid parser or SQL DDL parser extracts modules and dependencies
+    type: skill
+    skill: diagram-extraction
+    tool: extract_architecture
+    input: raw_input
+    output: architecture
+    on_error: stop
+
+  - id: review
+    name: Review Architecture
+    description: Human-in-the-loop — user confirms or edits extracted architecture
+    type: human_review
+    input: architecture
+    output: confirmed_architecture
+    ui: ModuleChips + DependencyMapper
+
+  - id: analyze
+    name: Analyze Impact (Agentic Loop)
+    description: >
+      Confidence-gated multi-iteration agent loop. Each iteration calls Claude with 4 tools
+      (trace_dependency, check_circular, estimate_blast_radius, generate_migration_path)
+      to trace the dependency graph and compute blast radius. Iterates until confidence >= 0.85
+      or max 2 iterations reached. Final synthesis pass generates the structured report.
+    type: agent
+    skill: impact-analysis
+    tool: run_agent_loop
+    input:
+      architecture: confirmed_architecture
+      feature: user_feature_description
+    output: impact_report
+    agent_config:
+      max_iterations: 2
+      confidence_threshold: 0.85
+      tools:
+        - trace_dependency
+        - check_circular
+        - estimate_blast_radius
+        - generate_migration_path
+    on_error: stop
+
+  - id: report
+    name: Render Report
+    description: Frontend renders blast radius, severity breakdown, TL;DR summary, impact cards, hidden deps, action plan, test coverage, and agent reasoning trail
+    type: render
+    input: impact_report
+    ui:
+      - BlastRadius
+      - ImpactCard
+      - HiddenDeps
+      - DeploymentRisks
+      - TestChecklist
+      - IterationLog
