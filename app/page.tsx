@@ -1,714 +1,522 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useAnalysisStore } from "@/store/analysis.store";
-import { Sidebar } from "@/components/shared/Sidebar";
-import { LoadingSteps } from "@/components/shared/LoadingSteps";
-import { ImageUploader } from "@/components/upload/ImageUploader";
-import { MermaidInput } from "@/components/upload/MermaidInput";
-import { ModuleChips } from "@/components/review/ModuleChips";
-import { DependencyMapper } from "@/components/review/DependencyMapper";
-import { ImpactCard } from "@/components/results/ImpactCard";
-import { HiddenDeps } from "@/components/results/HiddenDeps";
-import { TestChecklist } from "@/components/results/TestChecklist";
-import { DeploymentRisks } from "@/components/results/DeploymentRisks";
-import { AgentThinking } from "@/components/agent/AgentThinking";
-import { IterationLog } from "@/components/agent/IterationLog";
-import type { Architecture, ImpactReport } from "@/types";
-import { parseSchema } from "@/lib/schema-parser";
+import { useState } from "react";
+import Link from "next/link";
+import { ZipUploader } from "@/components/upload/ZipUploader";
+import { exportJson, exportMarkdown } from "@/lib/report-format";
+import type { ImpactKind, RepoImpactReport, ValidatedFinding } from "@/types";
 
-const EXTRACT_STEPS = [
-  "Reading diagram...",
-  "Identifying modules...",
-  "Mapping dependencies...",
-  "Building architecture graph...",
-];
+type Phase = "input" | "loading" | "report";
+type SourceMode = "github" | "zip";
+type Stage = "fetching" | "indexed" | "retrieved" | "reasoning" | "verifying" | "done";
 
-type UploadTab = "image" | "mermaid" | "schema";
+interface Progress {
+  stage: Stage;
+  source?: string;
+  fileCount?: number;
+  languages?: string[];
+  truncated?: boolean;
+  seeds?: number;
+  candidates?: number;
+}
 
-const DEMO_ARCHITECTURE: Architecture = {
-  modules: [
-    "Auth Service",
-    "API Gateway",
-    "Payment Service",
-    "PostgreSQL",
-    "Redis Cache",
-    "Notification Service",
-    "Frontend App",
-  ],
-  dependencies: [
-    { from: "API Gateway", to: "Auth Service" },
-    { from: "API Gateway", to: "Payment Service" },
-    { from: "Auth Service", to: "PostgreSQL" },
-    { from: "Auth Service", to: "Redis Cache" },
-    { from: "Payment Service", to: "PostgreSQL" },
-    { from: "Notification Service", to: "Redis Cache" },
-    { from: "Frontend App", to: "API Gateway" },
-  ],
-  confidence: 0.95,
+const SEVERITY: Record<string, string> = {
+  high: "bg-red-50 text-red-700 border-red-200",
+  medium: "bg-amber-50 text-amber-700 border-amber-200",
+  low: "bg-zinc-50 text-zinc-600 border-zinc-200",
 };
 
-const DEMO_REPORT: ImpactReport = {
-  blastRadius: 5,
-  agentConfidence: 0.91,
-  iterationHistory: [
-    {
-      iteration: 1,
-      confidence: 0.62,
-      toolsCalled: [
-        {
-          tool: "trace_dependency",
-          input: { module: "Auth Service" },
-          output: JSON.stringify({ module: "Auth Service", upstream: ["API Gateway"], downstream: ["PostgreSQL", "Redis Cache"], transitive_upstreams: ["Frontend App"] }),
-          reasoning: "Agent called trace_dependency to investigate Auth Service impact",
-        },
-        {
-          tool: "estimate_blast_radius",
-          input: { impacted_modules: ["Auth Service", "API Gateway"] },
-          output: JSON.stringify({ directCount: 2, transitiveCount: 3, totalAffected: 5, percentageOfSystem: 71 }),
-          reasoning: "Agent called estimate_blast_radius to quantify scope",
-        },
-      ],
-      findings: "Auth Service is directly impacted — OAuth replaces the entire token flow. API Gateway must update middleware to validate JWTs. Frontend App login UI must be replaced. Blast radius is 5 modules (71% of system).",
-      critique: "Not yet verified if Notification Service email flows link back to auth endpoints. Payment Service internal auth path also unclear.",
-    },
-    {
-      iteration: 2,
-      confidence: 0.91,
-      toolsCalled: [
-        {
-          tool: "trace_dependency",
-          input: { module: "Notification Service" },
-          output: JSON.stringify({ module: "Notification Service", upstream: [], downstream: ["Redis Cache"], transitive_upstreams: [] }),
-          reasoning: "Agent called trace_dependency to check Notification Service auth dependency",
-        },
-        {
-          tool: "generate_migration_path",
-          input: { risks: ["PostgreSQL", "Auth Service", "API Gateway", "Frontend App"] },
-          output: JSON.stringify({ deploymentOrder: ["PostgreSQL", "Auth Service", "API Gateway", "Frontend App"], warnings: [] }),
-          reasoning: "Agent called generate_migration_path to produce safe deployment order",
-        },
-      ],
-      findings: "Confirmed Notification Service has hidden dependency on Auth Service via password reset email flows. Payment Service also relies on internal auth tokens. Safe deployment order: PostgreSQL → Auth Service → API Gateway → Frontend App.",
-      critique: "All major risks identified. Deployment order confirmed via topological sort. Confidence sufficient to finalize report.",
-    },
-  ],
-  impacted: [
-    {
-      module: "Auth Service",
-      severity: "high",
-      reason:
-        "OAuth replaces the entire authentication flow. All token issuance, session management, and user identity resolution must be rewritten.",
-    },
-    {
-      module: "API Gateway",
-      severity: "high",
-      reason:
-        "Every inbound request must now validate OAuth tokens instead of session cookies. Auth middleware changes affect all downstream routes.",
-    },
-    {
-      module: "Frontend App",
-      severity: "medium",
-      reason:
-        "Login/signup UI must be replaced with OAuth provider buttons. Session storage strategy changes from cookie-based to token-based.",
-    },
-    {
-      module: "PostgreSQL",
-      severity: "medium",
-      reason:
-        "User table schema changes required — password_hash column deprecated, new oauth_provider and oauth_id columns needed with a unique index.",
-    },
-    {
-      module: "Redis Cache",
-      severity: "low",
-      reason:
-        "Session cache keys need migration. OAuth tokens are stateless so cache invalidation simplifies, but all existing sessions must be flushed on deploy.",
-    },
-  ],
-  hiddenDeps: [
-    {
-      from: "Notification Service",
-      to: "Auth Service",
-      risk: "Password reset emails link back to the auth flow. OAuth changes will break the reset token validation endpoint these emails point to.",
-    },
-    {
-      from: "Payment Service",
-      to: "Auth Service",
-      risk: "Payment webhooks verify caller identity via internal auth tokens. OAuth migration must preserve this internal service-to-service auth path or payments will fail silently.",
-    },
-  ],
-  tests: [
-    {
-      module: "Auth Service",
-      cases: [
-        "Google OAuth callback returns valid JWT",
-        "GitHub OAuth callback returns valid JWT",
-        "Invalid OAuth state param returns 400",
-        "Expired OAuth code returns 401",
-        "New user auto-provisioned on first OAuth login",
-        "Existing user matched by email on OAuth login",
-      ],
-    },
-    {
-      module: "API Gateway",
-      cases: [
-        "All routes reject requests with no auth header",
-        "Routes accept valid OAuth JWT",
-        "Routes reject expired JWT",
-        "Routes reject tampered JWT signature",
-      ],
-    },
-    {
-      module: "Frontend App",
-      cases: [
-        "Login page renders Google and GitHub OAuth buttons",
-        "Redirect to provider OAuth on button click",
-        "Token stored correctly after OAuth callback",
-        "Logged-out state clears token from storage",
-      ],
-    },
-    {
-      module: "PostgreSQL",
-      cases: [
-        "Migration adds oauth_provider column without data loss",
-        "Migration adds oauth_id column with unique index",
-        "Rollback migration restores previous schema cleanly",
-      ],
-    },
-  ],
-  deploymentRisks: [
-    "All active user sessions will be invalidated on deploy. Users must re-authenticate via OAuth. Schedule during a low-traffic window and communicate downtime in advance.",
-    "Database migration is destructive — password_hash column will be dropped. Ensure a full verified backup exists before running the migration in production.",
-    "OAuth app credentials (client_id, client_secret) must be provisioned in both Google and GitHub developer consoles before deployment. Missing credentials cause complete auth failure.",
-  ],
+const RISK: Record<string, string> = {
+  high: "bg-red-600 text-white",
+  medium: "bg-amber-500 text-white",
+  low: "bg-emerald-600 text-white",
 };
+
+const EXAMPLE_REPOS = ["developit/mitt", "lukeed/clsx", "sindresorhus/yocto-queue"];
 
 export default function Home() {
-  const store = useAnalysisStore();
-  const [uploadTab, setUploadTab] = useState<UploadTab>("mermaid");
-  const [schemaCode, setSchemaCode] = useState("");
-  const [showTests, setShowTests] = useState(false);
-  const [sessionId] = useState(() => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    return Array.from({ length: 3 }, () => Array.from({ length: 3 }, () => chars[Math.floor(Math.random() * chars.length)]).join("")).join("-");
-  });
-  const sessionTs = new Date().toISOString().slice(0, 16).replace("T", "-").replace(/:/g, ":");
+  const [phase, setPhase] = useState<Phase>("input");
+  const [mode, setMode] = useState<SourceMode>("github");
+  const [githubUrl, setGithubUrl] = useState("");
+  const [zipBase64, setZipBase64] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [changeRequest, setChangeRequest] = useState("");
+  const [report, setReport] = useState<RepoImpactReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<Progress>({ stage: "fetching" });
 
-  function handleDemo() {
-    store.setFeatureDescription(
-      "Add OAuth 2.0 login with Google and GitHub, replacing the current email/password flow"
-    );
-    store.setArchitecture(DEMO_ARCHITECTURE);
-    store.setReport(DEMO_REPORT);
-    store.setStep("report");
-  }
+  const hasSource = mode === "github" ? githubUrl.trim().length > 0 : Boolean(zipBase64);
+  const canAnalyze = hasSource && changeRequest.trim().length > 0;
+  const disabledReason = !hasSource
+    ? mode === "github"
+      ? "Paste a GitHub repository URL to continue."
+      : "Upload a repository .zip to continue."
+    : changeRequest.trim().length === 0
+      ? "Describe the change to continue."
+      : null;
 
-  async function handleExtract() {
-    store.setStep("extracting");
-    store.setError(null);
-
+  async function analyze() {
+    if (!canAnalyze) return;
+    setPhase("loading");
+    setError(null);
+    setProgress({ stage: "fetching" });
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000);
-
+    const timeout = setTimeout(() => controller.abort(), 150_000);
     try {
-        // Schema tab: parse locally, no API call
-      if (uploadTab === "schema") {
-        clearTimeout(timeoutId);
-        const arch = parseSchema(schemaCode);
-        if (arch.modules.length === 0) throw new Error("No tables found. Paste a valid SQL DDL with CREATE TABLE statements.");
-        store.setArchitecture(arch);
-        store.setStep("review");
-        return;
-      }
-
       const body =
-        uploadTab === "mermaid"
-          ? { mermaid: store.mermaidCode }
-          : { image: store.uploadedImage, mediaType: store.uploadedImageType };
-
-      const res = await fetch("/api/extract", {
+        mode === "github"
+          ? { githubUrl: githubUrl.trim(), changeRequest: changeRequest.trim() }
+          : { zipBase64, changeRequest: changeRequest.trim() };
+      const res = await fetch("/api/analyze-repo", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        let data: { error?: string };
-        try { data = await res.json(); } catch { throw new Error("Unexpected response from server."); }
-        throw new Error(data.error ?? "Extraction failed");
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error ?? "Analysis failed.");
       }
 
-      let arch: Architecture;
-      try { arch = await res.json(); } catch { throw new Error("Unexpected response from server."); }
-      store.setArchitecture(arch);
-      store.setStep("review");
-    } catch (err) {
-      clearTimeout(timeoutId);
-      if (err instanceof Error && err.name === "AbortError") {
-        store.setError("Request timed out. Please try again.");
-      } else {
-        store.setError(err instanceof Error ? err.message : "Unknown error");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let finished = false;
+      while (!finished) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const evt = JSON.parse(line) as Progress & { report?: RepoImpactReport; error?: string };
+          if (evt.stage === "done" && evt.report) {
+            setReport(evt.report);
+            setPhase("report");
+            finished = true;
+            break;
+          }
+          if ((evt as { stage: string }).stage === "error") {
+            throw new Error(evt.error ?? "Analysis failed.");
+          }
+          setProgress((p) => ({ ...p, ...evt }));
+        }
       }
-      store.setStep("upload");
+    } catch (e) {
+      const msg =
+        e instanceof DOMException && e.name === "AbortError"
+          ? "Analysis timed out. Try a smaller repository."
+          : e instanceof Error
+            ? e.message
+            : "Unexpected error.";
+      setError(msg);
+      setPhase("input");
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
-  async function handleAnalyze() {
-    if (!store.architecture || !store.featureDescription.trim()) return;
-    store.setStep("analyzing");
-    store.setError(null);
-    store.setAgentProgress(0, 0);
-
-    // Agent loop: 3 iterations × ~40s each; give 3min buffer
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180_000);
-
-    try {
-      const res = await fetch("/api/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          architecture: store.architecture,
-          feature: store.featureDescription,
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        let data: { error?: string };
-        try { data = await res.json(); } catch { throw new Error("Unexpected response from server."); }
-        throw new Error(data.error ?? "Analysis failed");
-      }
-
-      let report: ImpactReport;
-      try { report = await res.json(); } catch { throw new Error("Unexpected response from server."); }
-      store.setReport(report);
-      store.setStep("report");
-    } catch (err) {
-      clearTimeout(timeoutId);
-      console.error("[handleAnalyze] Agent failed:", err);
-      const msg = err instanceof Error && err.name === "AbortError"
-        ? "Request timed out after 3 minutes. Please try again."
-        : err instanceof Error ? err.message : "Unknown error";
-      // setStep first (it clears error), then setError so it stays visible
-      store.setStep("feature");
-      store.setError(msg);
-    }
+  function reset() {
+    setPhase("input");
+    setReport(null);
+    setError(null);
   }
-
-  const isWide = store.step === "report";
 
   return (
-    <div className="flex min-h-screen bg-slate-50 text-zinc-900">
-      <Sidebar current={store.step} />
-
-      <div className="flex-1 ml-56 min-h-screen">
-        {/* Session bar */}
-        {store.step === "report" && (
-          <div className="border-b border-zinc-200 bg-white px-8 py-2 flex items-center gap-4">
-            <span className="text-[10px] font-mono text-zinc-400 tracking-wider">
-              SESSION_ID: {sessionId} / TIMESTAMP: {sessionTs}
+    <div className="min-h-screen bg-slate-50 text-zinc-900 flex flex-col">
+      <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white/80 backdrop-blur">
+        <div className="mx-auto max-w-3xl px-4 sm:px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600">
+              <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
             </span>
-            {store.report?.agentConfidence != null && (
-              <span className="ml-auto text-[10px] font-mono text-emerald-600 font-bold">
-                ● AGENT CONFIDENCE: {Math.round(store.report.agentConfidence * 100)}%
-              </span>
-            )}
+            <span className="font-semibold tracking-tight">ImpactIQ</span>
+            <span className="hidden sm:inline rounded-full border border-zinc-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-400">
+              Repo analysis
+            </span>
           </div>
+          <Link href="/diagram" className="text-xs text-zinc-500 hover:text-violet-600 transition-colors">
+            Diagram mode →
+          </Link>
+        </div>
+      </header>
+
+      <main className="flex-1 mx-auto w-full max-w-3xl px-4 sm:px-6 py-10">
+        {phase === "input" && (
+          <InputView
+            mode={mode}
+            setMode={setMode}
+            githubUrl={githubUrl}
+            setGithubUrl={setGithubUrl}
+            fileName={fileName}
+            onZip={(b64, name) => {
+              setZipBase64(b64);
+              setFileName(name);
+            }}
+            changeRequest={changeRequest}
+            setChangeRequest={setChangeRequest}
+            error={error}
+            canAnalyze={canAnalyze}
+            disabledReason={disabledReason}
+            onAnalyze={analyze}
+          />
         )}
-        <main className={`${isWide ? "max-w-5xl" : "max-w-2xl"} mx-auto px-8 py-10 flex flex-col gap-8`}>
-          {store.error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-              {store.error}
-            </div>
-          )}
+        {phase === "loading" && <ProgressView progress={progress} />}
+        {phase === "report" && report && <Report report={report} onReset={reset} />}
+      </main>
 
-          {/* Upload */}
-          {store.step === "upload" && (
-            <div className="flex flex-col gap-6">
-              <div>
-                <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">
-                  What will this feature break?
-                </h1>
-                <p className="mt-1.5 text-sm text-zinc-500">
-                  Upload your architecture diagram and ImpactIQ computes the blast radius before you write a single line of code.
-                </p>
-              </div>
+      <footer className="border-t border-zinc-200 py-4">
+        <p className="mx-auto max-w-3xl px-6 text-center text-[11px] text-zinc-400">
+          Code is analyzed in memory and never executed · secrets &amp; <code>node_modules</code> stripped · every finding verified against the source
+        </p>
+      </footer>
+    </div>
+  );
+}
 
-              {/* Demo banner */}
-              <div className="flex items-center justify-between rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
-                <div>
-                  <p className="text-sm font-medium text-zinc-800">See a live example</p>
-                  <p className="text-xs text-zinc-500 mt-0.5">OAuth migration — 2-iteration agent run, no API key needed</p>
-                </div>
-                <button
-                  onClick={handleDemo}
-                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold transition-colors"
-                >
-                  Try the demo
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                  </svg>
-                </button>
-              </div>
+function InputView(props: {
+  mode: SourceMode;
+  setMode: (m: SourceMode) => void;
+  githubUrl: string;
+  setGithubUrl: (s: string) => void;
+  fileName: string | null;
+  onZip: (b64: string, name: string) => void;
+  changeRequest: string;
+  setChangeRequest: (s: string) => void;
+  error: string | null;
+  canAnalyze: boolean;
+  disabledReason: string | null;
+  onAnalyze: () => void;
+}) {
+  const {
+    mode, setMode, githubUrl, setGithubUrl, fileName, onZip,
+    changeRequest, setChangeRequest, error, canAnalyze, disabledReason, onAnalyze,
+  } = props;
 
-              <div className="flex gap-1 p-1 bg-zinc-100 rounded-xl w-fit">
-                {([
-                  { id: "mermaid", label: "Mermaid" },
-                  { id: "schema", label: "DB Schema" },
-                  { id: "image", label: "Image" },
-                ] as { id: UploadTab; label: string }[]).map(({ id, label }) => (
-                  <button
-                    key={id}
-                    onClick={() => setUploadTab(id)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      uploadTab === id
-                        ? "bg-white text-zinc-900 shadow-sm"
-                        : "text-zinc-500 hover:text-zinc-700"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="pt-4 text-center">
+        <h1 className="text-3xl font-bold tracking-tight text-zinc-900">What will this change break?</h1>
+        <p className="mx-auto mt-2 max-w-xl text-sm text-zinc-500">
+          Point ImpactIQ at a repository and describe a change in plain English. It predicts the blast
+          radius — every finding backed by a real file, symbol, and line you can click to verify.
+        </p>
+      </div>
 
-              {uploadTab === "mermaid" && <MermaidInput onReady={handleExtract} />}
-              {uploadTab === "image" && <ImageUploader onReady={handleExtract} />}
-              {uploadTab === "schema" && (
-                <div className="flex flex-col gap-3">
-                  <div className="rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-4 py-2.5 bg-zinc-50 border-b border-zinc-100">
-                      <span className="text-xs font-mono font-semibold text-zinc-500">SQL DDL — paste CREATE TABLE statements</span>
-                      <button
-                        onClick={() => setSchemaCode(`CREATE TABLE users (
-  id SERIAL PRIMARY KEY,
-  email VARCHAR(255) UNIQUE NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+      <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-6">
+        <div className="mb-1 text-xs font-semibold text-zinc-400">Step 1 — the code</div>
+        <div className="mb-4 mt-2 inline-flex rounded-lg bg-zinc-100 p-1 text-sm">
+          {([ { id: "github", label: "GitHub URL" }, { id: "zip", label: "Upload ZIP" } ] as { id: SourceMode; label: string }[]).map(({ id, label }) => (
+            <button
+              key={id}
+              onClick={() => setMode(id)}
+              className={`px-4 py-1.5 rounded-md font-medium transition-all ${mode === id ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
-CREATE TABLE orders (
-  id SERIAL PRIMARY KEY,
-  user_id INTEGER REFERENCES users(id),
-  status VARCHAR(50) NOT NULL,
-  total DECIMAL(10,2),
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE order_items (
-  id SERIAL PRIMARY KEY,
-  order_id INTEGER REFERENCES orders(id),
-  product_id INTEGER REFERENCES products(id),
-  quantity INTEGER NOT NULL,
-  price DECIMAL(10,2)
-);
-
-CREATE TABLE products (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  price DECIMAL(10,2),
-  stock_count INTEGER DEFAULT 0
-);`)}
-                        className="text-[10px] font-mono text-violet-600 hover:text-violet-700 font-semibold"
-                      >
-                        Load example
-                      </button>
-                    </div>
-                    <textarea
-                      value={schemaCode}
-                      onChange={(e) => setSchemaCode(e.target.value)}
-                      placeholder={`CREATE TABLE users (\n  id SERIAL PRIMARY KEY,\n  email VARCHAR(255)\n);\n\nCREATE TABLE orders (\n  id SERIAL PRIMARY KEY,\n  user_id INTEGER REFERENCES users(id)\n);`}
-                      rows={14}
-                      spellCheck={false}
-                      className="w-full px-4 py-3 font-mono text-xs text-zinc-800 placeholder:text-zinc-300 focus:outline-none resize-none bg-white"
-                    />
-                  </div>
-                  <p className="text-[11px] text-zinc-400 leading-relaxed">
-                    Tables become modules · <code className="bg-zinc-100 px-1 rounded">FOREIGN KEY ... REFERENCES</code> constraints become dependencies · Parsed locally, no API call
-                  </p>
-                  <button
-                    onClick={handleExtract}
-                    disabled={!schemaCode.trim()}
-                    className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:bg-zinc-100 disabled:text-zinc-400 text-white font-semibold text-sm transition-colors"
-                  >
-                    Parse Schema
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Extracting */}
-          {store.step === "extracting" && (
-            <div className="flex flex-col items-center gap-8 py-16">
-              <div className="w-14 h-14 rounded-2xl bg-violet-100 border border-violet-200 flex items-center justify-center">
-                <svg className="w-7 h-7 text-violet-600 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                </svg>
-              </div>
-              <div className="text-center">
-                <h2 className="text-lg font-semibold text-zinc-800">Extracting Architecture</h2>
-                <p className="text-sm text-zinc-500 mt-1">Claude is reading your diagram...</p>
-              </div>
-              <LoadingSteps steps={EXTRACT_STEPS} />
-            </div>
-          )}
-
-          {/* Review */}
-          {store.step === "review" && (
-            <div className="flex flex-col gap-6">
-              <div>
-                <h2 className="text-xl font-bold text-zinc-900 tracking-tight">Review Extracted Architecture</h2>
-                <p className="text-sm text-zinc-500 mt-1.5">
-                  Confirm Claude extracted your system correctly. Add or remove modules and dependencies.
-                </p>
-              </div>
-              <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-6 flex flex-col gap-6">
-                <ModuleChips />
-                <div className="border-t border-zinc-200" />
-                <DependencyMapper />
-              </div>
-              <button
-                onClick={() => store.setStep("feature")}
-                disabled={!store.architecture?.modules.length}
-                className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:bg-zinc-100 disabled:text-zinc-400 text-white font-semibold text-sm transition-colors"
-              >
-                Architecture Looks Good — Describe Your Feature
-              </button>
-            </div>
-          )}
-
-          {/* Feature */}
-          {store.step === "feature" && (
-            <div className="flex flex-col gap-6">
-              <div>
-                <h2 className="text-xl font-bold text-zinc-900 tracking-tight">What are you building?</h2>
-                <p className="text-sm text-zinc-500 mt-1.5">
-                  Describe the feature in plain English. ImpactIQ will trace every module it could affect.
-                </p>
-              </div>
-              <textarea
-                value={store.featureDescription}
-                onChange={(e) => store.setFeatureDescription(e.target.value)}
-                placeholder="e.g. Add OAuth 2.0 login with Google and GitHub, replacing the current email/password flow..."
-                rows={5}
-                className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20 resize-none transition-colors shadow-sm"
+        {mode === "github" ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2 rounded-xl border border-zinc-200 px-3 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-colors">
+              <svg className="h-4 w-4 flex-shrink-0 text-zinc-400" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .5C5.73.5.75 5.48.75 11.75c0 4.98 3.23 9.2 7.7 10.7.56.1.77-.24.77-.54v-1.9c-3.13.68-3.79-1.51-3.79-1.51-.51-1.3-1.25-1.64-1.25-1.64-1.02-.7.08-.68.08-.68 1.13.08 1.72 1.16 1.72 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.02-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15a10.8 10.8 0 015.64 0c2.15-1.45 3.09-1.15 3.09-1.15.62 1.55.23 2.7.11 2.98.72.79 1.16 1.79 1.16 3.02 0 4.32-2.63 5.27-5.14 5.55.4.35.76 1.03.76 2.08v3.08c0 .3.2.65.78.54a11.26 11.26 0 007.69-10.7C23.25 5.48 18.27.5 12 .5z" />
+              </svg>
+              <input
+                value={githubUrl}
+                onChange={(e) => setGithubUrl(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && canAnalyze && onAnalyze()}
+                placeholder="https://github.com/owner/repo"
+                spellCheck={false}
+                className="w-full bg-transparent py-2.5 text-sm outline-none placeholder:text-zinc-400"
               />
-              <div className="flex gap-3">
-                <button
-                  onClick={() => store.setStep("review")}
-                  className="px-5 py-3 rounded-xl border border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:border-zinc-300 text-sm font-medium transition-colors"
-                >
-                  Back
-                </button>
-                <button
-                  onClick={handleAnalyze}
-                  disabled={!store.featureDescription.trim()}
-                  className="flex-1 py-3 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:bg-zinc-100 disabled:text-zinc-400 text-white font-semibold text-sm transition-colors"
-                >
-                  Analyze Impact
-                </button>
-              </div>
             </div>
-          )}
-
-          {/* Analyzing — time-driven animated progress */}
-          {store.step === "analyzing" && (
-            <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
-              <AgentThinking />
-            </div>
-          )}
-
-          {/* Report */}
-          {store.step === "report" && store.report && (() => {
-            const report = store.report!;
-            const total = store.architecture?.modules.length ?? report.blastRadius;
-            const pct = total > 0 ? Math.round((report.blastRadius / total) * 100) : 0;
-            const highCount = report.impacted.filter(m => m.severity === "high").length;
-            const medCount = report.impacted.filter(m => m.severity === "medium").length;
-            const lowCount = report.impacted.filter(m => m.severity === "low").length;
-            const confidence = report.agentConfidence ?? 0;
-            const iterCount = report.iterationHistory?.length ?? 0;
-
-            const blastColor = pct >= 70 ? { text: "text-red-600", border: "border-red-200", bar: "bg-red-500" }
-              : pct >= 40 ? { text: "text-amber-600", border: "border-amber-200", bar: "bg-amber-500" }
-              : pct >= 20 ? { text: "text-yellow-600", border: "border-yellow-200", bar: "bg-yellow-400" }
-              : { text: "text-emerald-600", border: "border-emerald-200", bar: "bg-emerald-500" };
-
-            // Auto-generate summary from data
-            const highModules = report.impacted.filter(m => m.severity === "high").map(m => m.module);
-            const medModules = report.impacted.filter(m => m.severity === "medium").map(m => m.module);
-            let summary = "";
-            if (highModules.length > 0) {
-              summary += `${highModules.slice(0, 2).join(" and ")}${highModules.length > 2 ? ` and ${highModules.length - 2} more` : ""} require${highModules.length === 1 ? "s" : ""} direct code changes.`;
-            }
-            if (medModules.length > 0) {
-              summary += ` ${medModules.slice(0, 2).join(", ")}${medModules.length > 2 ? ` +${medModules.length - 2}` : ""} ${medModules.length === 1 ? "has" : "have"} interface or contract changes.`;
-            }
-            if (report.hiddenDeps.length > 0) {
-              summary += ` ${report.hiddenDeps.length} non-obvious risk${report.hiddenDeps.length !== 1 ? "s" : ""} detected that could break silently.`;
-            }
-            if (!summary) summary = "Analysis complete. Review impacted modules below.";
-
-            const totalTests = report.tests.reduce((acc, t) => acc + t.cases.length, 0);
-
-            return (
-              <div className="flex flex-col gap-5">
-                {/* Page header */}
-                <div>
-                  <h2 className="text-xl font-black text-zinc-900 tracking-tight uppercase">Impact Report</h2>
-                  <p className="text-xs text-zinc-400 font-mono mt-1 truncate max-w-lg">&ldquo;{store.featureDescription}&rdquo;</p>
-                </div>
-
-                {/* Metrics bar */}
-                <div className="grid grid-cols-3 gap-3">
-                  {/* Blast radius */}
-                  <div className={`rounded-xl border ${blastColor.border} bg-white p-4 flex flex-col gap-1`}>
-                    <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">Blast Radius</span>
-                    <span className={`text-3xl font-black tabular-nums ${blastColor.text}`}>{pct}%</span>
-                    <div className="h-1 rounded-full bg-zinc-100 overflow-hidden mt-1">
-                      <div className={`h-full rounded-full ${blastColor.bar}`} style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="text-[11px] text-zinc-400 font-mono">{report.blastRadius}/{total} modules</span>
-                  </div>
-
-                  {/* Severity breakdown */}
-                  <div className="rounded-xl border border-zinc-200 bg-white p-4 flex flex-col gap-2">
-                    <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">Severity</span>
-                    <div className="flex flex-col gap-1.5 mt-1">
-                      {highCount > 0 && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-mono font-semibold text-red-600">● HIGH</span>
-                          <span className="text-xs font-bold text-zinc-800 tabular-nums">{highCount} module{highCount !== 1 ? "s" : ""}</span>
-                        </div>
-                      )}
-                      {medCount > 0 && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-mono font-semibold text-amber-500">● MEDIUM</span>
-                          <span className="text-xs font-bold text-zinc-800 tabular-nums">{medCount} module{medCount !== 1 ? "s" : ""}</span>
-                        </div>
-                      )}
-                      {lowCount > 0 && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-mono font-semibold text-blue-500">● LOW</span>
-                          <span className="text-xs font-bold text-zinc-800 tabular-nums">{lowCount} module{lowCount !== 1 ? "s" : ""}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Agent confidence */}
-                  <div className="rounded-xl border border-zinc-200 bg-white p-4 flex flex-col gap-1">
-                    <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">Agent Confidence</span>
-                    <span className={`text-3xl font-black tabular-nums ${confidence >= 0.85 ? "text-emerald-600" : confidence >= 0.6 ? "text-amber-500" : "text-red-500"}`}>
-                      {Math.round(confidence * 100)}%
-                    </span>
-                    <span className="text-[11px] text-zinc-400 font-mono">{iterCount} iteration{iterCount !== 1 ? "s" : ""} · {iterCount === 3 ? "max reached" : confidence >= 0.85 ? "converged" : "partial"}</span>
-                  </div>
-                </div>
-
-                {/* Summary */}
-                <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3.5">
-                  <p className="text-[10px] font-mono font-bold text-zinc-400 uppercase tracking-wider mb-1.5">TL;DR</p>
-                  <p className="text-sm text-zinc-700 leading-relaxed">{summary}</p>
-                </div>
-
-                {/* What Breaks */}
-                <div>
-                  <h3 className="text-[11px] font-mono font-bold uppercase tracking-widest text-zinc-500 mb-3">
-                    What Breaks <span className="text-zinc-300 mx-1">·</span> {report.impacted.length} module{report.impacted.length !== 1 ? "s" : ""}
-                  </h3>
-                  <div className="flex flex-col gap-2">
-                    {report.impacted.map((mod, i) => (
-                      <ImpactCard key={mod.module} module={mod} index={i} />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Non-Obvious Risks */}
-                {report.hiddenDeps.length > 0 && (
-                  <div>
-                    <h3 className="text-[11px] font-mono font-bold uppercase tracking-widest text-zinc-500 mb-3">
-                      Non-Obvious Risks <span className="text-zinc-300 mx-1">·</span> {report.hiddenDeps.length} hidden dependency
-                    </h3>
-                    <HiddenDeps deps={report.hiddenDeps} />
-                  </div>
-                )}
-
-                {/* Action Plan */}
-                {report.deploymentRisks.length > 0 && (
-                  <div>
-                    <h3 className="text-[11px] font-mono font-bold uppercase tracking-widest text-zinc-500 mb-3">
-                      Action Plan <span className="text-zinc-300 mx-1">·</span> {report.deploymentRisks.length} step{report.deploymentRisks.length !== 1 ? "s" : ""}
-                    </h3>
-                    <DeploymentRisks risks={report.deploymentRisks} />
-                  </div>
-                )}
-
-                {/* Test Coverage — collapsible */}
-                {report.tests.length > 0 && (
-                  <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
-                    <button
-                      onClick={() => setShowTests(!showTests)}
-                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-zinc-50 transition-colors"
-                    >
-                      <div className="flex items-center gap-2">
-                        <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                        </svg>
-                        <span className="text-sm font-semibold text-zinc-700">Test Coverage</span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500">
-                          {totalTests} cases · {report.tests.length} module{report.tests.length !== 1 ? "s" : ""}
-                        </span>
-                      </div>
-                      <svg
-                        className={`w-4 h-4 text-zinc-400 transition-transform ${showTests ? "rotate-180" : ""}`}
-                        fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                    {showTests && (
-                      <div className="border-t border-zinc-100 divide-y divide-zinc-100">
-                        {report.tests.map((t) => (
-                          <div key={t.module} className="px-5 py-3.5">
-                            <p className="text-xs font-mono font-bold text-zinc-700 mb-2">{t.module}</p>
-                            <ul className="flex flex-col gap-1">
-                              {t.cases.map((c, i) => (
-                                <li key={i} className="flex items-start gap-2 text-xs text-zinc-500">
-                                  <span className="w-4 h-4 rounded-full border border-zinc-200 flex-shrink-0 mt-0.5" />
-                                  {c}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Agent Reasoning Trail — collapsible */}
-                {report.iterationHistory && report.iterationHistory.length > 0 && (
-                  <div className="rounded-xl border border-zinc-200 bg-white p-5">
-                    <IterationLog logs={report.iterationHistory} agentConfidence={report.agentConfidence} />
-                  </div>
-                )}
-
-                {/* Run New Scan */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-zinc-400">Try:</span>
+              {EXAMPLE_REPOS.map((r) => (
                 <button
-                  onClick={store.reset}
-                  className="w-full py-3 rounded-xl bg-zinc-950 hover:bg-zinc-800 text-white text-[11px] font-mono font-bold uppercase tracking-wider transition-colors"
+                  key={r}
+                  onClick={() => setGithubUrl(`https://github.com/${r}`)}
+                  className="rounded-md border border-zinc-200 px-2 py-0.5 text-[11px] text-zinc-500 hover:border-violet-300 hover:text-violet-700 transition-colors"
                 >
-                  Run New Scan
+                  {r}
                 </button>
-              </div>
-            );
-          })()}
-        </main>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <ZipUploader fileName={fileName} onLoaded={(b64, name) => onZip(b64, name)} />
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-6">
+        <div className="mb-2 text-xs font-semibold text-zinc-400">Step 2 — the change</div>
+        <textarea
+          value={changeRequest}
+          onChange={(e) => setChangeRequest(e.target.value)}
+          placeholder="e.g. Add a once() method that auto-removes the handler after the first call"
+          rows={3}
+          className="w-full resize-none rounded-xl border border-zinc-200 px-3 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition-colors"
+        />
+        <p className="mt-2 text-[11px] text-zinc-400">
+          Tip: name the feature or method you&apos;re adding (e.g. &ldquo;add <code>once()</code> to the emitter&rdquo;) rather than a vague goal — the retrieval matches your words against real code.
+        </p>
+      </div>
+
+      {error && <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+
+      <div className="flex flex-col items-center gap-2">
+        <button
+          onClick={onAnalyze}
+          disabled={!canAnalyze}
+          className="w-full rounded-xl bg-violet-600 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
+        >
+          Analyze impact
+        </button>
+        {disabledReason && <p className="text-[11px] text-zinc-400">{disabledReason}</p>}
       </div>
     </div>
   );
+}
+
+const STEP_ORDER: Stage[] = ["fetching", "indexed", "retrieved", "reasoning", "verifying"];
+
+function ProgressView({ progress }: { progress: Progress }) {
+  const current = STEP_ORDER.indexOf(progress.stage === "done" ? "verifying" : progress.stage);
+  const labels: Record<Stage, string> = {
+    fetching: progress.source ? `Fetching ${progress.source}` : "Fetching repository",
+    indexed:
+      progress.fileCount != null
+        ? `Indexed ${progress.fileCount} file${progress.fileCount === 1 ? "" : "s"}${progress.languages?.length ? ` · ${progress.languages.join(", ")}` : ""}`
+        : "Indexing code",
+    retrieved:
+      progress.candidates != null
+        ? `Traced blast radius · ${progress.candidates} candidate${progress.candidates === 1 ? "" : "s"}, ${progress.seeds} seed${progress.seeds === 1 ? "" : "s"}`
+        : "Tracing dependencies",
+    reasoning: "Reasoning over evidence with Claude",
+    verifying: "Verifying every finding against the code",
+    done: "Done",
+  };
+
+  return (
+    <div className="mx-auto max-w-md py-20">
+      <ul className="flex flex-col gap-4">
+        {STEP_ORDER.map((stage, i) => {
+          const state = i < current ? "done" : i === current ? "active" : "pending";
+          return (
+            <li key={stage} className="flex items-center gap-3">
+              <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
+                {state === "done" ? (
+                  <svg className="h-5 w-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : state === "active" ? (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-200 border-t-violet-600" />
+                ) : (
+                  <span className="h-2 w-2 rounded-full bg-zinc-300" />
+                )}
+              </span>
+              <span className={`text-sm ${state === "pending" ? "text-zinc-400" : state === "active" ? "text-zinc-800 font-medium" : "text-zinc-600"}`}>
+                {labels[stage]}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-6 text-center text-[11px] text-zinc-400">Reasoning can take 20–40s for a real repository.</p>
+    </div>
+  );
+}
+
+function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => void }) {
+  function download(name: string, content: string, mime: string) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const weakRetrieval = report.retrieval.seeds.length === 0;
+  const truncated = report.repo?.truncated;
+
+  return (
+    <section className="flex flex-col gap-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-zinc-500">
+          <span className="font-medium text-zinc-700">Change:</span> {report.changeRequest}
+        </p>
+        <button onClick={onReset} className="text-xs text-zinc-500 hover:text-violet-600 transition-colors">
+          ← New analysis
+        </button>
+      </div>
+
+      {/* Repo summary */}
+      {report.repo && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-xs text-zinc-500">
+          <span className="font-medium text-zinc-700">{report.repo.name}</span>
+          <span>{report.repo.fileCount} files</span>
+          {report.repo.languages.length > 0 && <span>{report.repo.languages.join(", ")}</span>}
+          {report.retrieval.seeds.length > 0 && (
+            <span>seeds: {report.retrieval.seeds.map((s) => s.split("/").pop()).join(", ")}</span>
+          )}
+        </div>
+      )}
+
+      {/* Honesty banner */}
+      {(weakRetrieval || truncated) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {weakRetrieval && (
+            <p>⚠ Your description didn&apos;t strongly match any files, so this run may be incomplete. Try naming a specific feature, file, or symbol.</p>
+          )}
+          {truncated && <p>⚠ This repository is large and was truncated during indexing — some impacts may be missed.</p>}
+        </div>
+      )}
+
+      {/* Risk header */}
+      <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
+        <div className="flex items-center justify-between">
+          <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${RISK[report.risk.level]}`}>
+            {report.risk.level} risk · {report.risk.score}/100
+          </span>
+          <div className="flex gap-2">
+            <button onClick={() => download("impactiq-report.md", exportMarkdown(report), "text/markdown")} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs transition-colors hover:border-violet-400 hover:text-violet-700">Export .md</button>
+            <button onClick={() => download("impactiq-report.json", exportJson(report), "application/json")} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs transition-colors hover:border-violet-400 hover:text-violet-700">Export .json</button>
+          </div>
+        </div>
+        <p className="mt-3 text-sm leading-relaxed text-zinc-700">{report.summary}</p>
+        <p className="mt-2 text-[11px] text-zinc-400">{report.risk.note}</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {report.risk.factors.map((f, i) => (
+            <span key={i} title={f.detail} className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] text-zinc-600">
+              {f.label}
+              {f.weight > 0 && <span className="text-zinc-400">+{f.weight}</span>}
+            </span>
+          ))}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-zinc-500">
+          <span>Blast radius: {report.retrieval.blastRadius}</span>
+          <span>Evidence coverage: {Math.round(report.stats.evidenceCoverage * 100)}%</span>
+          <span>Verified: {report.stats.verified}/{report.stats.total}</span>
+          {report.stats.rejected > 0 && <span className="text-red-600">Fabrications rejected: {report.stats.rejected}</span>}
+        </div>
+      </div>
+
+      {(["direct", "indirect", "potential"] as ImpactKind[]).map((kind) => {
+        const items = report.findings.filter((f) => f.impact === kind);
+        if (items.length === 0) return null;
+        return (
+          <Card key={kind} title={`${cap(kind)} impact (${items.length})`}>
+            <ul className="flex flex-col gap-3">
+              {items.map((f, i) => (
+                <FindingRow key={i} f={f} />
+              ))}
+            </ul>
+          </Card>
+        );
+      })}
+
+      {report.testRecommendations.length > 0 && (
+        <Card title="Recommended tests">
+          <ul className="flex flex-col gap-2">
+            {report.testRecommendations.map((t, i) => (
+              <li key={i} className="text-sm">
+                <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs">{t.file}</code>
+                <span className="text-zinc-600"> — {t.why}</span>
+                <span className="text-[11px] text-zinc-400"> ({t.existingTest ? `covered by ${t.existingTest}` : "no existing test"})</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {report.assumptions.length > 0 && (
+        <Card title="Assumptions"><BulletList items={report.assumptions} /></Card>
+      )}
+      {report.limitations.length > 0 && (
+        <Card title="Limitations"><BulletList items={report.limitations} /></Card>
+      )}
+    </section>
+  );
+}
+
+function FindingRow({ f }: { f: ValidatedFinding }) {
+  const [open, setOpen] = useState(false);
+  const loc = [f.symbol, f.line ? `L${f.line}` : null].filter(Boolean).join(" ");
+  const canExpand = Boolean(f.snippet);
+
+  return (
+    <li className="rounded-lg border border-zinc-200 overflow-hidden">
+      <button
+        onClick={() => canExpand && setOpen(!open)}
+        className={`w-full text-left p-3 ${canExpand ? "hover:bg-zinc-50 cursor-pointer" : "cursor-default"}`}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${SEVERITY[f.severity]}`}>{f.severity}</span>
+          <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs">{f.file}</code>
+          {loc && <span className="text-[11px] text-zinc-400">{loc}</span>}
+          {f.verified ? (
+            <span className="text-[10px] text-emerald-600" title="All cited references exist in the code">✓ verified</span>
+          ) : (
+            <span className="text-[10px] text-amber-600" title={f.issues.map((i) => i.message).join("; ")}>⚠︎ unverified</span>
+          )}
+          {canExpand && (
+            <span className="ml-auto text-[11px] text-violet-600">{open ? "Hide code" : "View code"}</span>
+          )}
+        </div>
+        <p className="mt-2 text-sm text-zinc-700">{f.reason}</p>
+        <p className="mt-1 text-[11px] text-zinc-400">Evidence: {f.evidence}</p>
+      </button>
+
+      {open && f.snippet && (
+        <div className="border-t border-zinc-200 bg-zinc-950 overflow-x-auto">
+          <pre className="text-[12px] leading-relaxed font-mono text-zinc-300 py-2">
+            {f.snippet.lines.map((line, i) => {
+              const lineNo = f.snippet!.startLine + i;
+              const isFocus = lineNo === f.snippet!.focusLine;
+              return (
+                <div key={i} className={isFocus ? "bg-violet-500/20" : ""}>
+                  <span className="inline-block w-10 pr-3 text-right text-zinc-600 select-none">{lineNo}</span>
+                  <span className={isFocus ? "text-white" : ""}>{line || " "}</span>
+                </div>
+              );
+            })}
+          </pre>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
+      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
+function BulletList({ items }: { items: string[] }) {
+  return (
+    <ul className="flex flex-col gap-1.5">
+      {items.map((s, i) => (
+        <li key={i} className="flex gap-2 text-sm text-zinc-600">
+          <span className="text-zinc-300">•</span>
+          <span>{s}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function cap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

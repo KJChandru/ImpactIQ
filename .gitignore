@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/.tmp-test
+/eval/.cache
 
 # next.js
 /.next/

@@ -1,10 +1,22 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { cacheGet, cacheKey, cacheSet } from "./response-cache";
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
 const MODEL = "claude-sonnet-4-6";
+
+/** Token usage of the most recent callText (for the eval harness cost metric). */
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  cached: boolean;
+}
+let lastUsage: Usage | null = null;
+export function getLastUsage(): Usage | null {
+  return lastUsage;
+}
 
 export async function callVision(
   imageBase64: string,
@@ -41,10 +53,18 @@ export async function callVision(
   return block.text;
 }
 
-export async function callText(prompt: string): Promise<string> {
+export async function callText(prompt: string, system?: string): Promise<string> {
+  const key = cacheKey(["callText", system ?? "", prompt]);
+  const cached = cacheGet(key);
+  if (cached !== null) {
+    lastUsage = { inputTokens: 0, outputTokens: 0, cached: true };
+    return cached;
+  }
+
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 8192,
+    ...(system ? { system } : {}),
     messages: [
       {
         role: "user",
@@ -53,8 +73,15 @@ export async function callText(prompt: string): Promise<string> {
     ],
   });
 
+  lastUsage = {
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+    cached: false,
+  };
+
   const block = response.content[0];
   if (block.type !== "text") throw new Error("Unexpected response type from Claude");
+  cacheSet(key, block.text);
   return block.text;
 }
 

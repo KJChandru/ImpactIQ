@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./*"] },
+    "outDir": ".tmp-test",
+    "noEmit": false
+  },
+  "include": ["scripts/**/*.ts", "lib/zip-reader.ts", "lib/code-indexer.ts", "lib/repo-graph.ts"]
+}

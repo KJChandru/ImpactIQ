@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Compiled milestone-test output — not source.
+    ".tmp-test/**",
+    ".tmp-m1/**",
+    "scripts/**",
   ]),
 ]);
 

@@ -6,13 +6,22 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:build": "tsc -p tsconfig.test.json",
+    "test:m1": "npm run test:build && node .tmp-test/scripts/m1-smoke.js",
+    "test:m2": "npm run test:build && node .tmp-test/scripts/m2-smoke.js",
+    "test:m3": "npm run test:build && node .tmp-test/scripts/m3-smoke.js",
+    "test:m4": "npm run test:build && node .tmp-test/scripts/m4-smoke.js",
+    "test:all": "npm run test:build && node .tmp-test/scripts/m1-smoke.js && node .tmp-test/scripts/m2-smoke.js && node .tmp-test/scripts/m3-smoke.js && node .tmp-test/scripts/m4-smoke.js",
+    "eval": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
+    "fflate": "^0.8.3",
     "next": "16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "typescript": "^5.9.3",
     "zod": "^4.4.3",
     "zustand": "^5.0.13"
   },
@@ -24,6 +33,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "vitest": "^4.1.12"
   }
 }
