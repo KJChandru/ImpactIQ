@@ -31,7 +31,9 @@ describe("ImpactIQ evaluation", () => {
     let totalCost = 0;
     let totalMs = 0;
     let liveCalls = 0;
-    const sum = { p: 0, r: 0, f1: 0, cov: 0 };
+    // Two views: the default-visible set (what a user sees) and all findings.
+    const visibleSum = { p: 0, r: 0, f1: 0, cov: 0 };
+    const allSum = { p: 0, r: 0, f1: 0 };
 
     for (const c of dataset) {
       const index = buildIndex(fixtures[c.fixture]);
@@ -39,12 +41,20 @@ describe("ImpactIQ evaluation", () => {
 
       const t = Date.now();
       let ok = true;
-      let confident: string[] = [];
+      let visible: string[] = [];
+      let all: string[] = [];
       let coverage = 0;
       try {
         const { validated } = await runRepoImpactAnalysis(index, c.changeRequest);
-        // "Confident" = direct + indirect (exclude speculative "potential").
-        confident = [...new Set(validated.findings.filter((f) => f.impact !== "potential").map((f) => f.file))];
+        // Default-visible = direct/indirect AND confidence ≠ low (matches the UI filter).
+        visible = [
+          ...new Set(
+            validated.findings
+              .filter((f) => f.impact !== "potential" && f.confidence !== "low")
+              .map((f) => f.file)
+          ),
+        ];
+        all = [...new Set(validated.findings.map((f) => f.file))];
         coverage = validated.stats.evidenceCoverage;
         fabricated += validated.stats.rejected;
         for (const f of validated.findings) if (!known.has(f.file)) allPredictedExist = false;
@@ -61,15 +71,19 @@ describe("ImpactIQ evaluation", () => {
       }
       if (ok) schemaValid++;
 
-      const m = prf(confident, c.expectedFiles);
-      sum.p += m.precision;
-      sum.r += m.recall;
-      sum.f1 += m.f1;
-      sum.cov += coverage;
-      rows.push({ id: c.id, p: m.precision, r: m.recall, f1: m.f1, cov: coverage, pred: confident.length, exp: c.expectedFiles.length, ms });
+      const m = prf(visible, c.expectedFiles);
+      const ma = prf(all, c.expectedFiles);
+      visibleSum.p += m.precision;
+      visibleSum.r += m.recall;
+      visibleSum.f1 += m.f1;
+      visibleSum.cov += coverage;
+      allSum.p += ma.precision;
+      allSum.r += ma.recall;
+      allSum.f1 += ma.f1;
+      rows.push({ id: c.id, p: m.precision, r: m.recall, f1: m.f1, cov: coverage, pred: visible.length, exp: c.expectedFiles.length, ms });
     }
 
-    console.log(`\n=== ImpactIQ Evaluation — ${n} cases (confident findings vs ground truth) ===`);
+    console.log(`\n=== ImpactIQ Evaluation — ${n} cases (default-visible findings vs ground truth) ===`);
     console.log(
       "case".padEnd(22),
       "P".padStart(5),
@@ -82,7 +96,8 @@ describe("ImpactIQ evaluation", () => {
       console.log(r.id.padEnd(22), fmt(r.p), fmt(r.r), fmt(r.f1), fmt(r.cov), `${r.pred}/${r.exp}`.padStart(9));
     }
     console.log("-".repeat(60));
-    console.log("MACRO AVG".padEnd(22), fmt(sum.p / n), fmt(sum.r / n), fmt(sum.f1 / n), fmt(sum.cov / n));
+    console.log("MACRO (visible)".padEnd(22), fmt(visibleSum.p / n), fmt(visibleSum.r / n), fmt(visibleSum.f1 / n), fmt(visibleSum.cov / n));
+    console.log("MACRO (all findings)".padEnd(22), fmt(allSum.p / n), fmt(allSum.r / n), fmt(allSum.f1 / n));
     console.log(`schema-validity : ${schemaValid}/${n} (${Math.round((100 * schemaValid) / n)}%)`);
     console.log(`fabricated paths rejected by validator : ${fabricated}`);
     console.log(

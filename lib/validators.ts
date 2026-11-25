@@ -41,6 +41,7 @@ const RepoFindingSchema = z.object({
   line: z.number().int().positive().optional(),
   impact: z.enum(["direct", "indirect", "potential"]),
   severity: z.enum(["high", "medium", "low"]),
+  confidence: z.enum(["high", "medium", "low"]).default("medium"),
   reason: z.string(),
   evidence: z.string(),
 });

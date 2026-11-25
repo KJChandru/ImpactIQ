@@ -63,10 +63,10 @@ assert(
 const crafted: RepoAnalysis = {
   summary: "crafted analysis for validator test",
   findings: [
-    { file: "src/checkout/coupon.ts", symbol: "applyCoupon", line: 2, impact: "direct", severity: "high", reason: "r", evidence: "e" }, // VERIFIED
-    { file: "src/does/not/exist.ts", impact: "direct", severity: "high", reason: "r", evidence: "e" }, // REJECTED (fabricated file)
-    { file: "src/checkout/cart.ts", line: 9999, impact: "indirect", severity: "medium", reason: "r", evidence: "e" }, // FLAGGED (bad line)
-    { file: "src/index.ts", symbol: "ghostSymbol", impact: "potential", severity: "low", reason: "r", evidence: "e" }, // FLAGGED (bad symbol)
+    { file: "src/checkout/coupon.ts", symbol: "applyCoupon", line: 2, impact: "direct", severity: "high", confidence: "high", reason: "r", evidence: "e" }, // VERIFIED
+    { file: "src/does/not/exist.ts", impact: "direct", severity: "high", confidence: "high", reason: "r", evidence: "e" }, // REJECTED (fabricated file)
+    { file: "src/checkout/cart.ts", line: 9999, impact: "indirect", severity: "medium", confidence: "medium", reason: "r", evidence: "e" }, // FLAGGED (bad line)
+    { file: "src/index.ts", symbol: "ghostSymbol", impact: "potential", severity: "low", confidence: "low", reason: "r", evidence: "e" }, // FLAGGED (bad symbol)
   ],
   tests: [
     { file: "src/index.test.ts", cases: ["a"] }, // kept

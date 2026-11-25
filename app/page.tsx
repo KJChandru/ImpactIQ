@@ -3,8 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ZipUploader } from "@/components/upload/ZipUploader";
+import { DependencyGraph } from "@/components/results/DependencyGraph";
 import { exportJson, exportMarkdown } from "@/lib/report-format";
-import type { ImpactKind, RepoImpactReport, ValidatedFinding } from "@/types";
+import { highlightLine, type TokenKind } from "@/lib/highlight";
+import type { ImpactKind, ReportGraph, RepoImpactReport, ValidatedFinding } from "@/types";
 
 type Phase = "input" | "loading" | "report";
 type SourceMode = "github" | "zip";
@@ -33,6 +35,17 @@ const RISK: Record<string, string> = {
 };
 
 const EXAMPLE_REPOS = ["developit/mitt", "lukeed/clsx", "sindresorhus/yocto-queue"];
+
+const TOKEN_CLASS: Record<TokenKind, string> = {
+  comment: "text-zinc-500 italic",
+  string: "text-emerald-400",
+  keyword: "text-violet-400",
+  type: "text-sky-400",
+  number: "text-amber-300",
+  plain: "text-zinc-300",
+};
+
+const SEV_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("input");
@@ -334,6 +347,9 @@ function ProgressView({ progress }: { progress: Progress }) {
 }
 
 function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => void }) {
+  const [showAll, setShowAll] = useState(false);
+  const githubBase = report.repo?.githubBase;
+
   function download(name: string, content: string, mime: string) {
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
@@ -347,15 +363,29 @@ function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => 
   const weakRetrieval = report.retrieval.seeds.length === 0;
   const truncated = report.repo?.truncated;
 
+  // Default view = confident findings (direct/indirect, confidence ≠ low).
+  const isConfident = (f: ValidatedFinding) => f.impact !== "potential" && f.confidence !== "low";
+  const hidden = report.findings.filter((f) => !isConfident(f));
+  const shown = showAll ? report.findings : report.findings.filter(isConfident);
+
+  const counts = { high: 0, medium: 0, low: 0 };
+  for (const f of report.findings.filter(isConfident)) counts[f.severity]++;
+
   return (
     <section className="flex flex-col gap-5">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-zinc-500">
-          <span className="font-medium text-zinc-700">Change:</span> {report.changeRequest}
-        </p>
-        <button onClick={onReset} className="text-xs text-zinc-500 hover:text-violet-600 transition-colors">
-          ← New analysis
-        </button>
+      {/* Sticky summary */}
+      <div className="sticky top-14 z-[5] -mx-4 sm:-mx-6 flex items-center justify-between gap-3 border-b border-zinc-200 bg-slate-50/85 px-4 sm:px-6 py-2 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase ${RISK[report.risk.level]}`}>
+            {report.risk.level} · {report.risk.score}
+          </span>
+          <span className="truncate text-xs text-zinc-500">{report.changeRequest}</span>
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <button onClick={() => download("impactiq-report.md", exportMarkdown(report), "text/markdown")} className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs transition-colors hover:border-violet-400 hover:text-violet-700">.md</button>
+          <button onClick={() => download("impactiq-report.json", exportJson(report), "application/json")} className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs transition-colors hover:border-violet-400 hover:text-violet-700">.json</button>
+          <button onClick={onReset} className="text-xs text-zinc-500 hover:text-violet-600 transition-colors">New</button>
+        </div>
       </div>
 
       {/* Repo summary */}
@@ -382,17 +412,14 @@ function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => 
 
       {/* Risk header */}
       <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
-        <div className="flex items-center justify-between">
-          <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${RISK[report.risk.level]}`}>
-            {report.risk.level} risk · {report.risk.score}/100
-          </span>
-          <div className="flex gap-2">
-            <button onClick={() => download("impactiq-report.md", exportMarkdown(report), "text/markdown")} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs transition-colors hover:border-violet-400 hover:text-violet-700">Export .md</button>
-            <button onClick={() => download("impactiq-report.json", exportJson(report), "application/json")} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs transition-colors hover:border-violet-400 hover:text-violet-700">Export .json</button>
-          </div>
-        </div>
+        <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${RISK[report.risk.level]}`}>
+          {report.risk.level} risk · {report.risk.score}/100
+        </span>
         <p className="mt-3 text-sm leading-relaxed text-zinc-700">{report.summary}</p>
         <p className="mt-2 text-[11px] text-zinc-400">{report.risk.note}</p>
+
+        <SeverityBar counts={counts} />
+
         <div className="mt-4 flex flex-wrap gap-2">
           {report.risk.factors.map((f, i) => (
             <span key={i} title={f.detail} className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] text-zinc-600">
@@ -409,19 +436,35 @@ function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => 
         </div>
       </div>
 
+      {/* Dependency / blast-radius graph */}
+      {report.graph && report.graph.nodes.length > 0 && <GraphCard graph={report.graph} />}
+
       {(["direct", "indirect", "potential"] as ImpactKind[]).map((kind) => {
-        const items = report.findings.filter((f) => f.impact === kind);
+        const items = shown
+          .filter((f) => f.impact === kind)
+          .sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || SEV_RANK[a.confidence] - SEV_RANK[b.confidence]);
         if (items.length === 0) return null;
         return (
           <Card key={kind} title={`${cap(kind)} impact (${items.length})`}>
             <ul className="flex flex-col gap-3">
               {items.map((f, i) => (
-                <FindingRow key={i} f={f} />
+                <FindingRow key={`${f.file}-${i}`} f={f} index={i} githubBase={githubBase} />
               ))}
             </ul>
           </Card>
         );
       })}
+
+      {hidden.length > 0 && (
+        <button
+          onClick={() => setShowAll(!showAll)}
+          className="self-start text-xs text-zinc-500 hover:text-violet-600 transition-colors"
+        >
+          {showAll
+            ? "Hide speculative / low-confidence findings"
+            : `Show ${hidden.length} speculative / low-confidence finding${hidden.length > 1 ? "s" : ""} →`}
+        </button>
+      )}
 
       {report.testRecommendations.length > 0 && (
         <Card title="Recommended tests">
@@ -447,19 +490,65 @@ function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => 
   );
 }
 
-function FindingRow({ f }: { f: ValidatedFinding }) {
+function SeverityBar({ counts }: { counts: { high: number; medium: number; low: number } }) {
+  const total = counts.high + counts.medium + counts.low;
+  if (total === 0) return null;
+  return (
+    <div className="mt-4">
+      <div className="flex h-2 overflow-hidden rounded-full bg-zinc-100">
+        {counts.high > 0 && <div style={{ flex: counts.high }} className="bg-red-500" />}
+        {counts.medium > 0 && <div style={{ flex: counts.medium }} className="bg-amber-500" />}
+        {counts.low > 0 && <div style={{ flex: counts.low }} className="bg-zinc-400" />}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-x-4 text-[11px] text-zinc-500">
+        {counts.high > 0 && <span><b className="text-red-600">{counts.high}</b> high</span>}
+        {counts.medium > 0 && <span><b className="text-amber-600">{counts.medium}</b> medium</span>}
+        {counts.low > 0 && <span><b className="text-zinc-600">{counts.low}</b> low</span>}
+      </div>
+    </div>
+  );
+}
+
+function GraphCard({ graph }: { graph: ReportGraph }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Blast-radius graph</h2>
+        <span className="text-[11px] text-violet-600">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <div className="mt-3">
+          <DependencyGraph graph={graph} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CONFIDENCE_CLASS: Record<string, string> = {
+  high: "text-emerald-600",
+  medium: "text-zinc-400",
+  low: "text-amber-600",
+};
+
+function FindingRow({ f, index, githubBase }: { f: ValidatedFinding; index: number; githubBase?: string }) {
   const [open, setOpen] = useState(false);
   const loc = [f.symbol, f.line ? `L${f.line}` : null].filter(Boolean).join(" ");
   const canExpand = Boolean(f.snippet);
+  const ghUrl = githubBase ? `${githubBase}/${f.file}${f.line ? `#L${f.line}` : ""}` : null;
 
   return (
-    <li className="rounded-lg border border-zinc-200 overflow-hidden">
-      <button
-        onClick={() => canExpand && setOpen(!open)}
-        className={`w-full text-left p-3 ${canExpand ? "hover:bg-zinc-50 cursor-pointer" : "cursor-default"}`}
-      >
+    <li
+      className="overflow-hidden rounded-lg border border-zinc-200"
+      style={{ animation: "fadeIn .3s ease-out both", animationDelay: `${index * 50}ms` }}
+    >
+      <div className="p-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${SEVERITY[f.severity]}`}>{f.severity}</span>
+          <span className={`text-[10px] ${CONFIDENCE_CLASS[f.confidence]}`} title="Model confidence this file is truly impacted">
+            {f.confidence} conf
+          </span>
           <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs">{f.file}</code>
           {loc && <span className="text-[11px] text-zinc-400">{loc}</span>}
           {f.verified ? (
@@ -467,24 +556,42 @@ function FindingRow({ f }: { f: ValidatedFinding }) {
           ) : (
             <span className="text-[10px] text-amber-600" title={f.issues.map((i) => i.message).join("; ")}>⚠︎ unverified</span>
           )}
-          {canExpand && (
-            <span className="ml-auto text-[11px] text-violet-600">{open ? "Hide code" : "View code"}</span>
-          )}
+          <span className="ml-auto flex items-center gap-3">
+            {ghUrl && (
+              <a href={ghUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-zinc-400 hover:text-violet-600 transition-colors" onClick={(e) => e.stopPropagation()}>
+                GitHub ↗
+              </a>
+            )}
+            {canExpand && (
+              <button onClick={() => setOpen(!open)} className="text-[11px] text-violet-600">
+                {open ? "Hide code" : "View code"}
+              </button>
+            )}
+          </span>
         </div>
         <p className="mt-2 text-sm text-zinc-700">{f.reason}</p>
         <p className="mt-1 text-[11px] text-zinc-400">Evidence: {f.evidence}</p>
-      </button>
+      </div>
 
       {open && f.snippet && (
-        <div className="border-t border-zinc-200 bg-zinc-950 overflow-x-auto">
-          <pre className="text-[12px] leading-relaxed font-mono text-zinc-300 py-2">
+        <div className="overflow-x-auto border-t border-zinc-200 bg-zinc-950">
+          <pre className="py-2 font-mono text-[12px] leading-relaxed">
             {f.snippet.lines.map((line, i) => {
               const lineNo = f.snippet!.startLine + i;
               const isFocus = lineNo === f.snippet!.focusLine;
+              const tokens = highlightLine(line);
               return (
-                <div key={i} className={isFocus ? "bg-violet-500/20" : ""}>
-                  <span className="inline-block w-10 pr-3 text-right text-zinc-600 select-none">{lineNo}</span>
-                  <span className={isFocus ? "text-white" : ""}>{line || " "}</span>
+                <div key={i} className={isFocus ? "bg-violet-500/15" : ""}>
+                  <span className="inline-block w-10 select-none pr-3 text-right text-zinc-600">{lineNo}</span>
+                  {tokens.length === 0 ? (
+                    <span> </span>
+                  ) : (
+                    tokens.map((t, j) => (
+                      <span key={j} className={TOKEN_CLASS[t.kind]}>
+                        {t.text}
+                      </span>
+                    ))
+                  )}
                 </div>
               );
             })}

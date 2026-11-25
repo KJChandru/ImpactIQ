@@ -182,12 +182,15 @@ export interface RetrievalResult {
 // Module D — AI reasoning output (pre-validation; may contain claims to verify)
 export type ImpactKind = "direct" | "indirect" | "potential";
 
+export type Confidence = "high" | "medium" | "low";
+
 export interface RepoFinding {
   file: string;
   symbol?: string; // optional cited symbol
   line?: number; // optional cited 1-based line
   impact: ImpactKind;
   severity: "high" | "medium" | "low";
+  confidence: Confidence; // how sure the model is this file is truly impacted
   reason: string;
   evidence: string; // the model's stated justification
 }
@@ -266,6 +269,28 @@ export interface RepoMeta {
   languages: string[];
   truncated: boolean; // repo was large and limited during intake
   warnings: string[]; // intake warnings surfaced to the user
+  githubBase?: string; // e.g. "https://github.com/owner/repo/blob/HEAD" (GitHub sources only)
+}
+
+// Blast-radius graph subset for the report visualization
+export interface GraphNode {
+  file: string;
+  relation: "seed" | "dependent"; // seed = retrieval target; dependent = reached via graph
+  distance: number; // hops from the nearest seed
+  flagged: boolean; // appears in the AI findings
+  severity?: "high" | "medium" | "low"; // strongest severity among its findings
+  reason?: string; // a short why, for the tooltip
+}
+
+export interface GraphEdge {
+  from: string; // importer
+  to: string; // imported (dependency)
+}
+
+export interface ReportGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  truncated: boolean; // node set was capped
 }
 
 // Module G — assembled, exportable report
@@ -281,4 +306,5 @@ export interface RepoImpactReport {
   retrieval: { seeds: string[]; blastRadius: number; notes: string[] };
   stats: ValidationResult["stats"];
   repo?: RepoMeta; // what was ingested (attached server-side)
+  graph?: ReportGraph; // blast-radius graph (attached server-side)
 }

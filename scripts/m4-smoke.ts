@@ -32,7 +32,7 @@ function vf(
   severity: "high" | "medium" | "low",
   impact: "direct" | "indirect" | "potential" = "direct"
 ): ValidatedFinding {
-  return { file, impact, severity, reason: "r", evidence: "e", verified: true, issues: [] };
+  return { file, impact, severity, confidence: "high", reason: "r", evidence: "e", verified: true, issues: [] };
 }
 function wrap(findings: ValidatedFinding[]): ValidationResult {
   return {

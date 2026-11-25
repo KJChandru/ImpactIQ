@@ -6,7 +6,7 @@ import { retrieveCandidates, buildRepoGraph } from "@/lib/repo-graph";
 import { analyzeRepoImpact } from "@/lib/repo-analyzer";
 import { validateAnalysis } from "@/lib/evidence-validator";
 import { assessRisk, recommendTests } from "@/lib/risk-heuristic";
-import { assembleReport } from "@/lib/repo-report";
+import { assembleReport, buildReportGraph } from "@/lib/repo-report";
 import { attachSnippets } from "@/lib/report-format";
 import { fetchGithubZip, GithubError, parseGithubTarget } from "@/lib/github";
 
@@ -43,12 +43,9 @@ export async function POST(request: NextRequest) {
   }
 
   const { zipBase64, githubUrl, changeRequest } = parsed.data;
-  const sourceName = githubUrl
-    ? (() => {
-        const t = parseGithubTarget(githubUrl);
-        return t ? `${t.owner}/${t.repo}` : githubUrl;
-      })()
-    : "uploaded.zip";
+  const target = githubUrl ? parseGithubTarget(githubUrl) : null;
+  const sourceName = githubUrl ? (target ? `${target.owner}/${target.repo}` : githubUrl) : "uploaded.zip";
+  const githubBase = target ? `https://github.com/${target.owner}/${target.repo}/blob/HEAD` : undefined;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -93,7 +90,9 @@ export async function POST(request: NextRequest) {
           languages,
           truncated: intake.warnings.length > 0,
           warnings: intake.warnings,
+          githubBase,
         };
+        report.graph = buildReportGraph(index, retrieval, validated);
         attachSnippets(report, new Map(intake.files.map((f) => [f.path, f.content])));
 
         send({ stage: "done", report });
