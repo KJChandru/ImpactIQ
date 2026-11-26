@@ -13,6 +13,7 @@
     "test:m3": "npm run test:build && node .tmp-test/scripts/m3-smoke.js",
     "test:m4": "npm run test:build && node .tmp-test/scripts/m4-smoke.js",
     "test:all": "npm run test:build && node .tmp-test/scripts/m1-smoke.js && node .tmp-test/scripts/m2-smoke.js && node .tmp-test/scripts/m3-smoke.js && node .tmp-test/scripts/m4-smoke.js",
+    "gen:demo": "npm run test:build && node .tmp-test/scripts/gen-demo.js",
     "eval": "vitest run"
   },
   "dependencies": {

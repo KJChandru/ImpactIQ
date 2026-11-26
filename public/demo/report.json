@@ -1,0 +1,373 @@
+{
+  "changeRequest": "Update the discount calculation logic.",
+  "summary": "Updating the discount calculation touches the pricing core and ripples through the cart and the checkout total shown to shoppers.",
+  "risk": {
+    "level": "high",
+    "score": 72,
+    "factors": [
+      {
+        "label": "Blast radius",
+        "detail": "4 file(s) impacted.",
+        "weight": 16
+      },
+      {
+        "label": "High-severity changes",
+        "detail": "2 finding(s) require direct changes.",
+        "weight": 24
+      },
+      {
+        "label": "Sensitive modules",
+        "detail": "src/checkout/CartService.ts, src/checkout/CheckoutPage.tsx — security/data-sensitive.",
+        "weight": 20
+      },
+      {
+        "label": "Test-coverage gaps",
+        "detail": "3 impacted file(s) have no existing test.",
+        "weight": 12
+      }
+    ],
+    "note": "Heuristic risk score (0–100) from weighted structural factors — not a probability or guarantee."
+  },
+  "findings": [
+    {
+      "file": "src/pricing/DiscountCalculator.ts",
+      "symbol": "calculateDiscount",
+      "line": 12,
+      "impact": "direct",
+      "severity": "high",
+      "confidence": "high",
+      "reason": "Holds the discount formula — changing how discounts are computed starts here.",
+      "evidence": "calculateDiscount() multiplies the subtotal by the matched rule's rate.",
+      "verified": true,
+      "issues": [],
+      "aiImpact": "direct",
+      "path": [
+        "src/pricing/DiscountCalculator.ts"
+      ],
+      "impactReason": "Seed file — directly matched the change description.",
+      "snippet": {
+        "startLine": 8,
+        "lines": [
+          "  { code: \"HALFOFF\", rate: 0.5 },",
+          "];",
+          "",
+          "/** Return the absolute discount (in cents) for a code and subtotal. */",
+          "export function calculateDiscount(code: string, subtotal: number): number {",
+          "  const rule = RULES.find((r) => r.code === code);",
+          "  if (!rule) return 0;",
+          "  return Math.round(subtotal * rule.rate);",
+          "}"
+        ],
+        "focusLine": 12
+      }
+    },
+    {
+      "file": "src/pricing/PricingService.ts",
+      "symbol": "priceCart",
+      "line": 10,
+      "impact": "indirect",
+      "severity": "high",
+      "confidence": "high",
+      "reason": "Applies the discount to the cart subtotal; a formula change flows through priceCart().",
+      "evidence": "priceCart() calls calculateDiscount() and subtracts the result from the subtotal.",
+      "verified": true,
+      "issues": [],
+      "aiImpact": "indirect",
+      "path": [
+        "src/pricing/PricingService.ts",
+        "src/pricing/DiscountCalculator.ts"
+      ],
+      "impactReason": "Reaches a changed file through 1 import hop.",
+      "snippet": {
+        "startLine": 6,
+        "lines": [
+          "  qty: number;",
+          "}",
+          "",
+          "/** Price a cart: subtotal minus any discount from the applied code. */",
+          "export function priceCart(items: LineItem[], discountCode: string): number {",
+          "  const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);",
+          "  const discount = calculateDiscount(discountCode, subtotal);",
+          "  return subtotal - discount;",
+          "}"
+        ],
+        "focusLine": 10
+      }
+    },
+    {
+      "file": "src/checkout/CartService.ts",
+      "symbol": "CartService",
+      "line": 3,
+      "impact": "indirect",
+      "severity": "medium",
+      "confidence": "medium",
+      "reason": "Exposes the payable total, which is derived from the discounted price.",
+      "evidence": "CartService.total() delegates to priceCart().",
+      "verified": true,
+      "issues": [],
+      "aiImpact": "indirect",
+      "path": [
+        "src/checkout/CartService.ts",
+        "src/pricing/PricingService.ts",
+        "src/pricing/DiscountCalculator.ts"
+      ],
+      "impactReason": "Reaches a changed file through 2 import hops.",
+      "snippet": {
+        "startLine": 1,
+        "lines": [
+          "import { priceCart, LineItem } from \"../pricing/PricingService\";",
+          "",
+          "export class CartService {",
+          "  private items: LineItem[] = [];",
+          "",
+          "  add(item: LineItem): void {",
+          "    this.items.push(item);"
+        ],
+        "focusLine": 3
+      }
+    },
+    {
+      "file": "src/checkout/CheckoutPage.tsx",
+      "symbol": "CheckoutPage",
+      "line": 4,
+      "impact": "indirect",
+      "severity": "medium",
+      "confidence": "medium",
+      "reason": "Displays the final amount owed, so the shopper-facing total reflects the new discount.",
+      "evidence": "CheckoutPage() reads cart.total(discountCode) and formats it.",
+      "verified": true,
+      "issues": [],
+      "aiImpact": "indirect",
+      "path": [
+        "src/checkout/CheckoutPage.tsx",
+        "src/checkout/CartService.ts",
+        "src/pricing/PricingService.ts",
+        "src/pricing/DiscountCalculator.ts"
+      ],
+      "impactReason": "Reaches a changed file through 3 import hops.",
+      "snippet": {
+        "startLine": 1,
+        "lines": [
+          "import { CartService } from \"./CartService\";",
+          "",
+          "/** Renders the order summary and the final amount owed to the shopper. */",
+          "export function CheckoutPage(discountCode: string): string {",
+          "  const cart = new CartService();",
+          "  cart.add({ name: \"Widget\", price: 2000, qty: 2 });",
+          "  const total = cart.total(discountCode);",
+          "  return `Total due: $${(total / 100).toFixed(2)}`;"
+        ],
+        "focusLine": 4
+      }
+    }
+  ],
+  "rejected": [],
+  "testRecommendations": [
+    {
+      "file": "src/pricing/DiscountCalculator.ts",
+      "why": "Holds the discount formula — changing how discounts are computed starts here.",
+      "existingTest": null
+    },
+    {
+      "file": "src/pricing/PricingService.ts",
+      "why": "Applies the discount to the cart subtotal; a formula change flows through priceCart().",
+      "existingTest": "src/pricing/PricingService.test.ts"
+    },
+    {
+      "file": "src/checkout/CartService.ts",
+      "why": "Exposes the payable total, which is derived from the discounted price.",
+      "existingTest": null
+    },
+    {
+      "file": "src/checkout/CheckoutPage.tsx",
+      "why": "Displays the final amount owed, so the shopper-facing total reflects the new discount.",
+      "existingTest": null
+    }
+  ],
+  "assumptions": [
+    "The discount rules in DiscountCalculator are the single source of truth for discount rates."
+  ],
+  "limitations": [
+    "This is a small sample repository; a real codebase may surface additional discount call sites."
+  ],
+  "retrieval": {
+    "seeds": [
+      "src/pricing/DiscountCalculator.ts"
+    ],
+    "blastRadius": 4,
+    "notes": []
+  },
+  "stats": {
+    "total": 4,
+    "verified": 4,
+    "flagged": 0,
+    "rejected": 0,
+    "evidenceCoverage": 1
+  },
+  "repo": {
+    "name": "sample/checkout-demo",
+    "fileCount": 5,
+    "languages": [
+      "typescript",
+      "tsx"
+    ],
+    "truncated": false,
+    "warnings": []
+  },
+  "health": {
+    "filesIndexed": 5,
+    "symbolsIndexed": 7,
+    "importsIndexed": 4,
+    "externalImports": 0,
+    "unresolvedImports": 0,
+    "testFiles": 1,
+    "skippedCount": 1,
+    "skipped": [
+      {
+        "path": "README.md",
+        "reason": "non-source file"
+      }
+    ],
+    "warnings": [],
+    "partial": true
+  },
+  "graph": {
+    "nodes": [
+      {
+        "file": "src/pricing/DiscountCalculator.ts",
+        "relation": "seed",
+        "distance": 0,
+        "flagged": true,
+        "severity": "high",
+        "reason": "Holds the discount formula — changing how discounts are computed starts here."
+      },
+      {
+        "file": "src/pricing/PricingService.ts",
+        "relation": "dependent",
+        "distance": 1,
+        "flagged": true,
+        "severity": "high",
+        "reason": "Applies the discount to the cart subtotal; a formula change flows through priceCart()."
+      },
+      {
+        "file": "src/checkout/CartService.ts",
+        "relation": "dependent",
+        "distance": 2,
+        "flagged": true,
+        "severity": "medium",
+        "reason": "Exposes the payable total, which is derived from the discounted price."
+      },
+      {
+        "file": "src/pricing/PricingService.test.ts",
+        "relation": "dependent",
+        "distance": 2,
+        "flagged": false
+      },
+      {
+        "file": "src/checkout/CheckoutPage.tsx",
+        "relation": "dependent",
+        "distance": 3,
+        "flagged": true,
+        "severity": "medium",
+        "reason": "Displays the final amount owed, so the shopper-facing total reflects the new discount."
+      }
+    ],
+    "edges": [
+      {
+        "from": "src/pricing/PricingService.ts",
+        "to": "src/pricing/DiscountCalculator.ts"
+      },
+      {
+        "from": "src/checkout/CartService.ts",
+        "to": "src/pricing/PricingService.ts"
+      },
+      {
+        "from": "src/pricing/PricingService.test.ts",
+        "to": "src/pricing/PricingService.ts"
+      },
+      {
+        "from": "src/checkout/CheckoutPage.tsx",
+        "to": "src/checkout/CartService.ts"
+      }
+    ],
+    "truncated": false
+  },
+  "pathSnippets": {
+    "src/pricing/DiscountCalculator.ts": {
+      "startLine": 1,
+      "lines": [
+        "export interface DiscountRule {",
+        "  code: string;",
+        "  rate: number;",
+        "}",
+        "",
+        "const RULES: DiscountRule[] = [",
+        "  { code: \"SAVE10\", rate: 0.1 },",
+        "  { code: \"HALFOFF\", rate: 0.5 },",
+        "];",
+        "",
+        "/** Return the absolute discount (in cents) for a code and subtotal. */",
+        "export function calculateDiscount(code: string, subtotal: number): number {",
+        "  const rule = RULES.find((r) => r.code === code);",
+        "  if (!rule) return 0;"
+      ],
+      "focusLine": null
+    },
+    "src/pricing/PricingService.ts": {
+      "startLine": 1,
+      "lines": [
+        "import { calculateDiscount } from \"./DiscountCalculator\";",
+        "",
+        "export interface LineItem {",
+        "  name: string;",
+        "  price: number;",
+        "  qty: number;",
+        "}",
+        "",
+        "/** Price a cart: subtotal minus any discount from the applied code. */",
+        "export function priceCart(items: LineItem[], discountCode: string): number {",
+        "  const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);",
+        "  const discount = calculateDiscount(discountCode, subtotal);",
+        "  return subtotal - discount;",
+        "}"
+      ],
+      "focusLine": null
+    },
+    "src/checkout/CartService.ts": {
+      "startLine": 1,
+      "lines": [
+        "import { priceCart, LineItem } from \"../pricing/PricingService\";",
+        "",
+        "export class CartService {",
+        "  private items: LineItem[] = [];",
+        "",
+        "  add(item: LineItem): void {",
+        "    this.items.push(item);",
+        "  }",
+        "",
+        "  /** Current payable total after discounts are applied. */",
+        "  total(discountCode: string): number {",
+        "    return priceCart(this.items, discountCode);",
+        "  }",
+        "}"
+      ],
+      "focusLine": null
+    },
+    "src/checkout/CheckoutPage.tsx": {
+      "startLine": 1,
+      "lines": [
+        "import { CartService } from \"./CartService\";",
+        "",
+        "/** Renders the order summary and the final amount owed to the shopper. */",
+        "export function CheckoutPage(discountCode: string): string {",
+        "  const cart = new CartService();",
+        "  cart.add({ name: \"Widget\", price: 2000, qty: 2 });",
+        "  const total = cart.total(discountCode);",
+        "  return `Total due: $${(total / 100).toFixed(2)}`;",
+        "}",
+        ""
+      ],
+      "focusLine": null
+    }
+  }
+}

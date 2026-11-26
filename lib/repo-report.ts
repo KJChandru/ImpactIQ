@@ -1,12 +1,15 @@
 import type {
   GraphEdge,
   GraphNode,
+  IntakeResult,
   ReportGraph,
+  RepoHealth,
   RepoImpactReport,
   RepoIndex,
   RetrievalResult,
   RiskAssessment,
   TestRecommendation,
+  ValidatedFinding,
   ValidationResult,
 } from "@/types";
 import { buildRepoGraph } from "./repo-graph";
@@ -14,7 +17,30 @@ import { assessRisk, recommendTests } from "./risk-heuristic";
 import { runRepoImpactAnalysis } from "./repo-analyzer";
 
 const GRAPH_NODE_CAP = 40;
+const SKIPPED_SAMPLE_CAP = 50;
 const SEV_RANK = { high: 0, medium: 1, low: 2 } as const;
+
+/**
+ * Summarize how complete the deterministic analysis was, straight from the
+ * intake + index facts (no AI). Lets the UI distinguish a full analysis from a
+ * partial one before the user trusts the findings.
+ */
+export function buildRepoHealth(index: RepoIndex, intake: IntakeResult): RepoHealth {
+  const skippedCount = intake.stats.skippedFiles;
+  const unresolvedImports = index.stats.unresolvedEdgeCount;
+  return {
+    filesIndexed: index.stats.fileCount,
+    symbolsIndexed: index.stats.symbolCount,
+    importsIndexed: index.stats.edgeCount,
+    externalImports: index.stats.externalEdgeCount,
+    unresolvedImports,
+    testFiles: index.files.filter((f) => f.isTest).length,
+    skippedCount,
+    skipped: intake.skipped.slice(0, SKIPPED_SAMPLE_CAP),
+    warnings: intake.warnings,
+    partial: intake.warnings.length > 0 || skippedCount > 0 || unresolvedImports > 0,
+  };
+}
 
 /**
  * Build the blast-radius graph subset for the report visualization: candidate
@@ -81,6 +107,43 @@ export function buildReportGraph(
 }
 
 /**
+ * Reconcile each finding's impact category against the dependency graph so the
+ * classification follows a documented rule rather than the model's judgement:
+ *
+ *   - seed file (lexically matched the change)        → "direct"
+ *   - reachable from a seed through import edges       → "indirect"
+ *   - no dependency path to any seed                   → "potential"
+ *
+ * The model's original label is preserved as `aiImpact`, and the explaining
+ * dependency path (`via`) is attached for the clickable-path UI. Confidence is
+ * left untouched — it describes certainty, not the relationship. Mutates in place.
+ */
+export function reconcileFindings(findings: ValidatedFinding[], retrieval: RetrievalResult): void {
+  const seedSet = new Set(retrieval.seeds);
+  const candByFile = new Map(retrieval.candidates.map((c) => [c.file, c]));
+
+  for (const f of findings) {
+    f.aiImpact = f.impact;
+    const cand = candByFile.get(f.file);
+
+    if (seedSet.has(f.file)) {
+      f.impact = "direct";
+      f.path = cand?.via ?? [f.file];
+      f.impactReason = "Seed file — directly matched the change description.";
+    } else if (cand) {
+      f.impact = "indirect";
+      f.path = cand.via;
+      const hops = cand.distance;
+      f.impactReason = `Reaches a changed file through ${hops} import hop${hops === 1 ? "" : "s"}.`;
+    } else {
+      f.impact = "potential";
+      f.path = undefined;
+      f.impactReason = "No dependency path to a changed file — the relationship is speculative.";
+    }
+  }
+}
+
+/**
  * Module G — Report & Export.
  *
  * Assembles the deterministic pieces (retrieval, validated findings, risk,
@@ -124,6 +187,7 @@ export async function generateRepoReport(
   changeRequest: string
 ): Promise<RepoImpactReport> {
   const { retrieval, validated } = await runRepoImpactAnalysis(index, changeRequest);
+  reconcileFindings(validated.findings, retrieval);
   const graph = buildRepoGraph(index);
   const risk = assessRisk(validated, index, graph, changeRequest);
   const testRecommendations = recommendTests(validated, index, graph);

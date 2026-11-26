@@ -6,8 +6,8 @@ import { retrieveCandidates, buildRepoGraph } from "@/lib/repo-graph";
 import { analyzeRepoImpact } from "@/lib/repo-analyzer";
 import { validateAnalysis } from "@/lib/evidence-validator";
 import { assessRisk, recommendTests } from "@/lib/risk-heuristic";
-import { assembleReport, buildReportGraph } from "@/lib/repo-report";
-import { attachSnippets } from "@/lib/report-format";
+import { assembleReport, buildReportGraph, buildRepoHealth, reconcileFindings } from "@/lib/repo-report";
+import { attachSnippets, attachPathSnippets } from "@/lib/report-format";
 import { fetchGithubZip, GithubError, parseGithubTarget } from "@/lib/github";
 
 // The TypeScript Compiler API + ZIP parsing need the Node runtime, not Edge.
@@ -79,6 +79,7 @@ export async function POST(request: NextRequest) {
 
         send({ stage: "verifying" });
         const validated = validateAnalysis(analysis, index);
+        reconcileFindings(validated.findings, retrieval);
         const graph = buildRepoGraph(index);
         const risk = assessRisk(validated, index, graph, changeRequest);
         const testRecommendations = recommendTests(validated, index, graph);
@@ -92,8 +93,11 @@ export async function POST(request: NextRequest) {
           warnings: intake.warnings,
           githubBase,
         };
+        report.health = buildRepoHealth(index, intake);
         report.graph = buildReportGraph(index, retrieval, validated);
-        attachSnippets(report, new Map(intake.files.map((f) => [f.path, f.content])));
+        const contents = new Map(intake.files.map((f) => [f.path, f.content]));
+        attachSnippets(report, contents);
+        attachPathSnippets(report, contents);
 
         send({ stage: "done", report });
       } catch (err) {

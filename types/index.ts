@@ -225,6 +225,9 @@ export interface ValidatedFinding extends RepoFinding {
   verified: boolean; // true when every cited reference exists in the RepoIndex
   issues: ValidationIssue[]; // why it was flagged (empty when verified)
   snippet?: CodeSnippet; // the actual code behind the citation (attached server-side)
+  aiImpact?: ImpactKind; // the model's original impact label, before graph reconciliation
+  impactReason?: string; // rule-based, one-line explanation of the impact category
+  path?: string[]; // dependency path file → … → seed (from the retrieval graph)
 }
 
 export interface ValidationResult {
@@ -272,6 +275,21 @@ export interface RepoMeta {
   githubBase?: string; // e.g. "https://github.com/owner/repo/blob/HEAD" (GitHub sources only)
 }
 
+// Repository health — how complete the deterministic analysis was (all facts
+// from intake + indexing; no AI). Surfaced at the top of the report.
+export interface RepoHealth {
+  filesIndexed: number; // index.stats.fileCount
+  symbolsIndexed: number; // index.stats.symbolCount
+  importsIndexed: number; // index.stats.edgeCount
+  externalImports: number; // index.stats.externalEdgeCount (node_modules / bare specifiers)
+  unresolvedImports: number; // index.stats.unresolvedEdgeCount (internal-style, didn't resolve)
+  testFiles: number; // indexed files detected as tests
+  skippedCount: number; // intake.stats.skippedFiles
+  skipped: SkippedEntry[]; // capped sample for the expandable list
+  warnings: string[]; // intake warnings (truncation, etc.)
+  partial: boolean; // truncated, or something was skipped/unresolved
+}
+
 // Blast-radius graph subset for the report visualization
 export interface GraphNode {
   file: string;
@@ -306,5 +324,7 @@ export interface RepoImpactReport {
   retrieval: { seeds: string[]; blastRadius: number; notes: string[] };
   stats: ValidationResult["stats"];
   repo?: RepoMeta; // what was ingested (attached server-side)
+  health?: RepoHealth; // how complete the analysis was (attached server-side)
   graph?: ReportGraph; // blast-radius graph (attached server-side)
+  pathSnippets?: Record<string, CodeSnippet>; // source for each file on a dependency path (attached server-side)
 }

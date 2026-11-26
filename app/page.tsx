@@ -1,15 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { ZipUploader } from "@/components/upload/ZipUploader";
 import { DependencyGraph } from "@/components/results/DependencyGraph";
 import { exportJson, exportMarkdown } from "@/lib/report-format";
 import { highlightLine, type TokenKind } from "@/lib/highlight";
-import type { ImpactKind, ReportGraph, RepoImpactReport, ValidatedFinding } from "@/types";
+import type { CodeSnippet, ImpactKind, RepoHealth, ReportGraph, RepoImpactReport, ValidatedFinding } from "@/types";
 
 type Phase = "input" | "loading" | "report";
-type SourceMode = "github" | "zip";
 type Stage = "fetching" | "indexed" | "retrieved" | "reasoning" | "verifying" | "done";
 
 interface Progress {
@@ -22,10 +19,10 @@ interface Progress {
   candidates?: number;
 }
 
-const SEVERITY: Record<string, string> = {
-  high: "bg-red-50 text-red-700 border-red-200",
-  medium: "bg-amber-50 text-amber-700 border-amber-200",
-  low: "bg-zinc-50 text-zinc-600 border-zinc-200",
+const SEV_DOT: Record<string, string> = {
+  high: "#ef4444",
+  medium: "#f59e0b",
+  low: "#a1a1aa",
 };
 
 const RISK: Record<string, string> = {
@@ -35,6 +32,7 @@ const RISK: Record<string, string> = {
 };
 
 const EXAMPLE_REPOS = ["developit/mitt", "lukeed/clsx", "sindresorhus/yocto-queue"];
+const DEMO_NAME = "sample/checkout-demo";
 
 const TOKEN_CLASS: Record<TokenKind, string> = {
   comment: "text-zinc-500 italic",
@@ -47,23 +45,24 @@ const TOKEN_CLASS: Record<TokenKind, string> = {
 
 const SEV_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
+const IMPACT_DOT: Record<ImpactKind, string> = {
+  direct: "bg-red-500",
+  indirect: "bg-amber-500",
+  potential: "bg-zinc-400",
+};
+
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("input");
-  const [mode, setMode] = useState<SourceMode>("github");
   const [githubUrl, setGithubUrl] = useState("");
-  const [zipBase64, setZipBase64] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
   const [changeRequest, setChangeRequest] = useState("");
   const [report, setReport] = useState<RepoImpactReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress>({ stage: "fetching" });
 
-  const hasSource = mode === "github" ? githubUrl.trim().length > 0 : Boolean(zipBase64);
+  const hasSource = githubUrl.trim().length > 0;
   const canAnalyze = hasSource && changeRequest.trim().length > 0;
   const disabledReason = !hasSource
-    ? mode === "github"
-      ? "Paste a GitHub repository URL to continue."
-      : "Upload a repository .zip to continue."
+    ? "Paste a GitHub repository URL to continue."
     : changeRequest.trim().length === 0
       ? "Describe the change to continue."
       : null;
@@ -76,10 +75,7 @@ export default function Home() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 150_000);
     try {
-      const body =
-        mode === "github"
-          ? { githubUrl: githubUrl.trim(), changeRequest: changeRequest.trim() }
-          : { zipBase64, changeRequest: changeRequest.trim() };
+      const body = { githubUrl: githubUrl.trim(), changeRequest: changeRequest.trim() };
       const res = await fetch("/api/analyze-repo", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -131,6 +127,20 @@ export default function Home() {
     }
   }
 
+  async function loadDemo() {
+    try {
+      const res = await fetch("/demo/report.json");
+      if (!res.ok) throw new Error();
+      const demo = (await res.json()) as RepoImpactReport;
+      setChangeRequest(demo.changeRequest);
+      setReport(demo);
+      setError(null);
+      setPhase("report");
+    } catch {
+      setError("Could not load the demo. Try analyzing a repository instead.");
+    }
+  }
+
   function reset() {
     setPhase("input");
     setReport(null);
@@ -152,30 +162,26 @@ export default function Home() {
               Repo analysis
             </span>
           </div>
+          {/* Diagram mode temporarily hidden — repo analysis is the primary flow.
           <Link href="/diagram" className="text-xs text-zinc-500 hover:text-violet-600 transition-colors">
             Diagram mode →
           </Link>
+          */}
         </div>
       </header>
 
       <main className="flex-1 mx-auto w-full max-w-3xl px-4 sm:px-6 py-10">
         {phase === "input" && (
           <InputView
-            mode={mode}
-            setMode={setMode}
             githubUrl={githubUrl}
             setGithubUrl={setGithubUrl}
-            fileName={fileName}
-            onZip={(b64, name) => {
-              setZipBase64(b64);
-              setFileName(name);
-            }}
             changeRequest={changeRequest}
             setChangeRequest={setChangeRequest}
             error={error}
             canAnalyze={canAnalyze}
             disabledReason={disabledReason}
             onAnalyze={analyze}
+            onDemo={loadDemo}
           />
         )}
         {phase === "loading" && <ProgressView progress={progress} />}
@@ -192,89 +198,89 @@ export default function Home() {
 }
 
 function InputView(props: {
-  mode: SourceMode;
-  setMode: (m: SourceMode) => void;
   githubUrl: string;
   setGithubUrl: (s: string) => void;
-  fileName: string | null;
-  onZip: (b64: string, name: string) => void;
   changeRequest: string;
   setChangeRequest: (s: string) => void;
   error: string | null;
   canAnalyze: boolean;
   disabledReason: string | null;
   onAnalyze: () => void;
+  onDemo: () => void;
 }) {
   const {
-    mode, setMode, githubUrl, setGithubUrl, fileName, onZip,
-    changeRequest, setChangeRequest, error, canAnalyze, disabledReason, onAnalyze,
+    githubUrl, setGithubUrl, changeRequest, setChangeRequest,
+    error, canAnalyze, disabledReason, onAnalyze, onDemo,
   } = props;
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="pt-4 text-center">
-        <h1 className="text-3xl font-bold tracking-tight text-zinc-900">What will this change break?</h1>
-        <p className="mx-auto mt-2 max-w-xl text-sm text-zinc-500">
-          Point ImpactIQ at a repository and describe a change in plain English. It predicts the blast
+    <div className="flex flex-col gap-6">
+      {/* Hero */}
+      <div className="pt-6 text-center">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] font-medium text-zinc-500 shadow-sm">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          Evidence-backed impact analysis
+        </span>
+        <h1 className="mt-4 text-3xl sm:text-4xl font-bold tracking-tight text-zinc-900">
+          What will this change break?
+        </h1>
+        <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-zinc-500">
+          Point ImpactIQ at a GitHub repository and describe a change in plain English. It predicts the blast
           radius — every finding backed by a real file, symbol, and line you can click to verify.
         </p>
+        <button
+          onClick={onDemo}
+          className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-4 py-1.5 text-xs font-medium text-violet-700 transition-colors hover:border-violet-300 hover:bg-violet-100"
+        >
+          ✨ Try the demo — no setup needed
+        </button>
       </div>
 
+      {/* Step 1 — GitHub repository */}
       <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-6">
-        <div className="mb-1 text-xs font-semibold text-zinc-400">Step 1 — the code</div>
-        <div className="mb-4 mt-2 inline-flex rounded-lg bg-zinc-100 p-1 text-sm">
-          {([ { id: "github", label: "GitHub URL" }, { id: "zip", label: "Upload ZIP" } ] as { id: SourceMode; label: string }[]).map(({ id, label }) => (
+        <div className="mb-3 flex items-center gap-2.5">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-100 text-[11px] font-bold text-violet-700">1</span>
+          <h2 className="text-sm font-semibold text-zinc-800">GitHub repository</h2>
+        </div>
+        <label className="flex items-center gap-2.5 rounded-xl border border-zinc-200 bg-slate-50/50 px-3.5 transition-colors focus-within:border-violet-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-100">
+          <svg className="h-4 w-4 flex-shrink-0 text-zinc-400" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 .5C5.73.5.75 5.48.75 11.75c0 4.98 3.23 9.2 7.7 10.7.56.1.77-.24.77-.54v-1.9c-3.13.68-3.79-1.51-3.79-1.51-.51-1.3-1.25-1.64-1.25-1.64-1.02-.7.08-.68.08-.68 1.13.08 1.72 1.16 1.72 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.02-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15a10.8 10.8 0 015.64 0c2.15-1.45 3.09-1.15 3.09-1.15.62 1.55.23 2.7.11 2.98.72.79 1.16 1.79 1.16 3.02 0 4.32-2.63 5.27-5.14 5.55.4.35.76 1.03.76 2.08v3.08c0 .3.2.65.78.54a11.26 11.26 0 007.69-10.7C23.25 5.48 18.27.5 12 .5z" />
+          </svg>
+          <input
+            value={githubUrl}
+            onChange={(e) => setGithubUrl(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && canAnalyze && onAnalyze()}
+            placeholder="https://github.com/owner/repo"
+            spellCheck={false}
+            className="w-full bg-transparent py-2.5 text-sm outline-none placeholder:text-zinc-400"
+          />
+        </label>
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-zinc-400">Try one:</span>
+          {EXAMPLE_REPOS.map((r) => (
             <button
-              key={id}
-              onClick={() => setMode(id)}
-              className={`px-4 py-1.5 rounded-md font-medium transition-all ${mode === id ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
+              key={r}
+              onClick={() => setGithubUrl(`https://github.com/${r}`)}
+              className="rounded-md border border-zinc-200 px-2 py-0.5 text-[11px] text-zinc-500 transition-colors hover:border-violet-300 hover:text-violet-700"
             >
-              {label}
+              {r}
             </button>
           ))}
         </div>
-
-        {mode === "github" ? (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2 rounded-xl border border-zinc-200 px-3 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-colors">
-              <svg className="h-4 w-4 flex-shrink-0 text-zinc-400" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 .5C5.73.5.75 5.48.75 11.75c0 4.98 3.23 9.2 7.7 10.7.56.1.77-.24.77-.54v-1.9c-3.13.68-3.79-1.51-3.79-1.51-.51-1.3-1.25-1.64-1.25-1.64-1.02-.7.08-.68.08-.68 1.13.08 1.72 1.16 1.72 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.02-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15a10.8 10.8 0 015.64 0c2.15-1.45 3.09-1.15 3.09-1.15.62 1.55.23 2.7.11 2.98.72.79 1.16 1.79 1.16 3.02 0 4.32-2.63 5.27-5.14 5.55.4.35.76 1.03.76 2.08v3.08c0 .3.2.65.78.54a11.26 11.26 0 007.69-10.7C23.25 5.48 18.27.5 12 .5z" />
-              </svg>
-              <input
-                value={githubUrl}
-                onChange={(e) => setGithubUrl(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && canAnalyze && onAnalyze()}
-                placeholder="https://github.com/owner/repo"
-                spellCheck={false}
-                className="w-full bg-transparent py-2.5 text-sm outline-none placeholder:text-zinc-400"
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] text-zinc-400">Try:</span>
-              {EXAMPLE_REPOS.map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setGithubUrl(`https://github.com/${r}`)}
-                  className="rounded-md border border-zinc-200 px-2 py-0.5 text-[11px] text-zinc-500 hover:border-violet-300 hover:text-violet-700 transition-colors"
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <ZipUploader fileName={fileName} onLoaded={(b64, name) => onZip(b64, name)} />
-        )}
       </div>
 
+      {/* Step 2 — the change */}
       <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-6">
-        <div className="mb-2 text-xs font-semibold text-zinc-400">Step 2 — the change</div>
+        <div className="mb-3 flex items-center gap-2.5">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-100 text-[11px] font-bold text-violet-700">2</span>
+          <h2 className="text-sm font-semibold text-zinc-800">Describe the change</h2>
+        </div>
         <textarea
           value={changeRequest}
           onChange={(e) => setChangeRequest(e.target.value)}
           placeholder="e.g. Add a once() method that auto-removes the handler after the first call"
           rows={3}
-          className="w-full resize-none rounded-xl border border-zinc-200 px-3 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition-colors"
+          className="w-full resize-none rounded-xl border border-zinc-200 bg-slate-50/50 px-3.5 py-2.5 text-sm outline-none transition-colors focus:border-violet-400 focus:bg-white focus:ring-2 focus:ring-violet-100"
         />
         <p className="mt-2 text-[11px] text-zinc-400">
           Tip: name the feature or method you&apos;re adding (e.g. &ldquo;add <code>once()</code> to the emitter&rdquo;) rather than a vague goal — the retrieval matches your words against real code.
@@ -287,9 +293,10 @@ function InputView(props: {
         <button
           onClick={onAnalyze}
           disabled={!canAnalyze}
-          className="w-full rounded-xl bg-violet-600 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
+          className="group flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-3.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-violet-700 hover:shadow-md disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400 disabled:shadow-none"
         >
           Analyze impact
+          <span className="transition-transform group-hover:translate-x-0.5">→</span>
         </button>
         {disabledReason && <p className="text-[11px] text-zinc-400">{disabledReason}</p>}
       </div>
@@ -349,6 +356,7 @@ function ProgressView({ progress }: { progress: Progress }) {
 function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => void }) {
   const [showAll, setShowAll] = useState(false);
   const githubBase = report.repo?.githubBase;
+  const isDemo = report.repo?.name === DEMO_NAME;
 
   function download(name: string, content: string, mime: string) {
     const blob = new Blob([content], { type: mime });
@@ -388,6 +396,16 @@ function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => 
         </div>
       </div>
 
+      {/* Sample-data banner */}
+      {isDemo && (
+        <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs text-violet-700">
+          <span className="rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">Demo</span>
+          <span>
+            This is a prepared <b>sample repository</b> — the full analysis flow ran on fixed demo data. Analyze your own repo above to see real results.
+          </span>
+        </div>
+      )}
+
       {/* Repo summary */}
       {report.repo && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-xs text-zinc-500">
@@ -399,6 +417,9 @@ function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => 
           )}
         </div>
       )}
+
+      {/* Repository health */}
+      {report.health && <HealthSummary health={report.health} />}
 
       {/* Honesty banner */}
       {(weakRetrieval || truncated) && (
@@ -439,6 +460,8 @@ function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => 
       {/* Dependency / blast-radius graph */}
       {report.graph && report.graph.nodes.length > 0 && <GraphCard graph={report.graph} />}
 
+      {shown.length > 0 && <ImpactLegend />}
+
       {(["direct", "indirect", "potential"] as ImpactKind[]).map((kind) => {
         const items = shown
           .filter((f) => f.impact === kind)
@@ -448,7 +471,7 @@ function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => 
           <Card key={kind} title={`${cap(kind)} impact (${items.length})`}>
             <ul className="flex flex-col gap-3">
               {items.map((f, i) => (
-                <FindingRow key={`${f.file}-${i}`} f={f} index={i} githubBase={githubBase} />
+                <FindingRow key={`${f.file}-${i}`} f={f} index={i} githubBase={githubBase} pathSnippets={report.pathSnippets} />
               ))}
             </ul>
           </Card>
@@ -509,6 +532,119 @@ function SeverityBar({ counts }: { counts: { high: number; medium: number; low: 
   );
 }
 
+const IMPACT_LEGEND: { kind: ImpactKind; color: string; blurb: string }[] = [
+  { kind: "direct", color: "bg-red-500", blurb: "The file is a change target — it lexically matched the change description." },
+  { kind: "indirect", color: "bg-amber-500", blurb: "Connected to a changed file through one or more import relationships." },
+  { kind: "potential", color: "bg-zinc-400", blurb: "A plausible relationship, but no dependency path confirms it — verify manually." },
+];
+
+function ImpactLegend() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-xs">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center justify-between text-zinc-500 hover:text-zinc-700">
+        <span className="flex items-center gap-3">
+          {IMPACT_LEGEND.map((l) => (
+            <span key={l.kind} className="flex items-center gap-1.5">
+              <span className={`h-2 w-2 rounded-full ${l.color}`} />
+              {cap(l.kind)}
+            </span>
+          ))}
+        </span>
+        <span className="text-[11px] text-violet-600">{open ? "Hide" : "What do these mean?"}</span>
+      </button>
+      {open && (
+        <ul className="mt-3 flex flex-col gap-2 border-t border-zinc-100 pt-3">
+          {IMPACT_LEGEND.map((l) => (
+            <li key={l.kind} className="flex gap-2 text-zinc-600">
+              <span className={`mt-1.5 h-2 w-2 flex-shrink-0 rounded-full ${l.color}`} />
+              <span>
+                <b className="text-zinc-800">{cap(l.kind)} impact</b> — {l.blurb}
+              </span>
+            </li>
+          ))}
+          <li className="text-[11px] text-zinc-400">
+            Category describes the relationship to the change; <b>confidence</b> (shown per finding) describes how sure the model is — the two are independent.
+          </li>
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function HealthSummary({ health }: { health: RepoHealth }) {
+  const [open, setOpen] = useState(false);
+  const metrics: { label: string; value: number; warn?: boolean }[] = [
+    { label: "Files indexed", value: health.filesIndexed },
+    { label: "Symbols", value: health.symbolsIndexed },
+    { label: "Imports", value: health.importsIndexed },
+    { label: "Test files", value: health.testFiles },
+    { label: "Unresolved imports", value: health.unresolvedImports, warn: health.unresolvedImports > 0 },
+    { label: "Skipped files", value: health.skippedCount, warn: health.skippedCount > 0 },
+  ];
+  const hasDetails = health.warnings.length > 0 || health.skipped.length > 0;
+
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Repository health</h2>
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+            health.partial ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${health.partial ? "bg-amber-500" : "bg-emerald-500"}`} />
+          {health.partial ? "Partial analysis" : "Complete analysis"}
+        </span>
+      </div>
+
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+        {metrics.map((m) => (
+          <div key={m.label}>
+            <dt className="text-[11px] text-zinc-400">{m.label}</dt>
+            <dd className={`text-lg font-semibold tabular-nums ${m.warn ? "text-amber-600" : "text-zinc-800"}`}>
+              {m.value.toLocaleString()}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      {hasDetails && (
+        <div className="mt-4 border-t border-zinc-100 pt-3">
+          <button onClick={() => setOpen(!open)} className="text-[11px] font-medium text-violet-600 hover:text-violet-700">
+            {open ? "Hide" : "Show"} warnings &amp; skipped files
+            {" "}({health.warnings.length + health.skipped.length})
+          </button>
+          {open && (
+            <div className="mt-3 flex flex-col gap-3">
+              {health.warnings.length > 0 && (
+                <ul className="flex flex-col gap-1">
+                  {health.warnings.map((w, i) => (
+                    <li key={i} className="flex gap-2 text-[11px] text-amber-700">
+                      <span>⚠</span>
+                      <span>{w}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {health.skipped.length > 0 && (
+                <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto">
+                  {health.skipped.map((s, i) => (
+                    <li key={i} className="flex items-baseline justify-between gap-3 text-[11px]">
+                      <code className="truncate text-zinc-600">{s.path}</code>
+                      <span className="flex-shrink-0 text-zinc-400">{s.reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GraphCard({ graph }: { graph: ReportGraph }) {
   const [open, setOpen] = useState(true);
   return (
@@ -526,13 +662,17 @@ function GraphCard({ graph }: { graph: ReportGraph }) {
   );
 }
 
-const CONFIDENCE_CLASS: Record<string, string> = {
-  high: "text-emerald-600",
-  medium: "text-zinc-400",
-  low: "text-amber-600",
-};
-
-function FindingRow({ f, index, githubBase }: { f: ValidatedFinding; index: number; githubBase?: string }) {
+function FindingRow({
+  f,
+  index,
+  githubBase,
+  pathSnippets,
+}: {
+  f: ValidatedFinding;
+  index: number;
+  githubBase?: string;
+  pathSnippets?: Record<string, CodeSnippet>;
+}) {
   const [open, setOpen] = useState(false);
   const loc = [f.symbol, f.line ? `L${f.line}` : null].filter(Boolean).join(" ");
   const canExpand = Boolean(f.snippet);
@@ -544,61 +684,134 @@ function FindingRow({ f, index, githubBase }: { f: ValidatedFinding; index: numb
       style={{ animation: "fadeIn .3s ease-out both", animationDelay: `${index * 50}ms` }}
     >
       <div className="p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${SEVERITY[f.severity]}`}>{f.severity}</span>
-          <span className={`text-[10px] ${CONFIDENCE_CLASS[f.confidence]}`} title="Model confidence this file is truly impacted">
-            {f.confidence} conf
-          </span>
-          <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs">{f.file}</code>
-          {loc && <span className="text-[11px] text-zinc-400">{loc}</span>}
-          {f.verified ? (
-            <span className="text-[10px] text-emerald-600" title="All cited references exist in the code">✓ verified</span>
-          ) : (
-            <span className="text-[10px] text-amber-600" title={f.issues.map((i) => i.message).join("; ")}>⚠︎ unverified</span>
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: SEV_DOT[f.severity] }} title={`${f.severity} severity`} />
+          <code className="truncate text-xs font-medium text-zinc-800">{f.file}</code>
+          {loc && <span className="flex-shrink-0 text-[11px] text-zinc-400">{loc}</span>}
+          {!f.verified && (
+            <span className="flex-shrink-0 text-[10px] text-amber-600" title={f.issues.map((i) => i.message).join("; ")}>
+              unverified
+            </span>
           )}
-          <span className="ml-auto flex items-center gap-3">
+          <span className="ml-auto flex flex-shrink-0 items-center gap-3 text-[11px]">
+            {f.confidence !== "high" && <span className="text-zinc-400">{f.confidence} confidence</span>}
             {ghUrl && (
-              <a href={ghUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-zinc-400 hover:text-violet-600 transition-colors" onClick={(e) => e.stopPropagation()}>
+              <a href={ghUrl} target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-violet-600 transition-colors">
                 GitHub ↗
               </a>
             )}
             {canExpand && (
-              <button onClick={() => setOpen(!open)} className="text-[11px] text-violet-600">
-                {open ? "Hide code" : "View code"}
+              <button onClick={() => setOpen(!open)} className="text-violet-600">
+                {open ? "Hide" : "Code"}
               </button>
             )}
           </span>
         </div>
         <p className="mt-2 text-sm text-zinc-700">{f.reason}</p>
-        <p className="mt-1 text-[11px] text-zinc-400">Evidence: {f.evidence}</p>
+        <p className="mt-1 text-[11px] text-zinc-400">{f.evidence}</p>
+        {f.impactReason && (
+          <p className="mt-2 flex items-center gap-1.5 text-[11px] text-zinc-500">
+            <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${IMPACT_DOT[f.impact]}`} />
+            <span className="font-medium text-zinc-600">{cap(f.impact)} impact:</span> {f.impactReason}
+          </p>
+        )}
+        {f.path && f.path.length > 1 && (
+          <DependencyPath path={f.path} pathSnippets={pathSnippets} githubBase={githubBase} />
+        )}
       </div>
 
-      {open && f.snippet && (
-        <div className="overflow-x-auto border-t border-zinc-200 bg-zinc-950">
-          <pre className="py-2 font-mono text-[12px] leading-relaxed">
-            {f.snippet.lines.map((line, i) => {
-              const lineNo = f.snippet!.startLine + i;
-              const isFocus = lineNo === f.snippet!.focusLine;
-              const tokens = highlightLine(line);
-              return (
-                <div key={i} className={isFocus ? "bg-violet-500/15" : ""}>
-                  <span className="inline-block w-10 select-none pr-3 text-right text-zinc-600">{lineNo}</span>
-                  {tokens.length === 0 ? (
-                    <span> </span>
-                  ) : (
-                    tokens.map((t, j) => (
-                      <span key={j} className={TOKEN_CLASS[t.kind]}>
-                        {t.text}
-                      </span>
-                    ))
-                  )}
-                </div>
-              );
-            })}
-          </pre>
-        </div>
-      )}
+      {open && f.snippet && <SnippetView snippet={f.snippet} />}
     </li>
+  );
+}
+
+function SnippetView({ snippet }: { snippet: CodeSnippet }) {
+  return (
+    <div className="overflow-x-auto border-t border-zinc-200 bg-zinc-950">
+      <pre className="py-2 font-mono text-[12px] leading-relaxed">
+        {snippet.lines.map((line, i) => {
+          const lineNo = snippet.startLine + i;
+          const isFocus = lineNo === snippet.focusLine;
+          const tokens = highlightLine(line);
+          return (
+            <div key={i} className={isFocus ? "bg-violet-500/15" : ""}>
+              <span className="inline-block w-10 select-none pr-3 text-right text-zinc-600">{lineNo}</span>
+              {tokens.length === 0 ? (
+                <span> </span>
+              ) : (
+                tokens.map((t, j) => (
+                  <span key={j} className={TOKEN_CLASS[t.kind]}>
+                    {t.text}
+                  </span>
+                ))
+              )}
+            </div>
+          );
+        })}
+      </pre>
+    </div>
+  );
+}
+
+/**
+ * The dependency chain that explains why a file is in scope. `path` is ordered
+ * [this file, …, change target]; each file imports the one below it. Clicking a
+ * file reveals its top-of-file source (where the import lives).
+ */
+function DependencyPath({
+  path,
+  pathSnippets,
+  githubBase,
+}: {
+  path: string[];
+  pathSnippets?: Record<string, CodeSnippet>;
+  githubBase?: string;
+}) {
+  const [openFile, setOpenFile] = useState<string | null>(null);
+  return (
+    <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Dependency path</div>
+      <ol className="flex flex-col gap-1">
+        {path.map((file, i) => {
+          const snippet = pathSnippets?.[file];
+          const isTarget = i === path.length - 1;
+          const open = openFile === file;
+          const ghUrl = githubBase ? `${githubBase}/${file}` : null;
+          const name = file.split("/").pop() ?? file;
+          return (
+            <li key={`${file}-${i}`} style={{ marginLeft: `${i * 16}px` }}>
+              <div className="flex items-center gap-1.5">
+                {i > 0 && <span className="text-zinc-300" title="imports">↳</span>}
+                <button
+                  onClick={() => snippet && setOpenFile(open ? null : file)}
+                  disabled={!snippet}
+                  className={`font-mono text-[11px] ${snippet ? "text-zinc-700 hover:text-violet-600" : "cursor-default text-zinc-500"}`}
+                  title={file}
+                >
+                  {name}
+                </button>
+                {isTarget && (
+                  <span className="rounded bg-violet-50 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-violet-600">
+                    change target
+                  </span>
+                )}
+                {ghUrl && (
+                  <a href={ghUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-zinc-400 hover:text-violet-600" title="Open on GitHub">
+                    ↗
+                  </a>
+                )}
+              </div>
+              {open && snippet && (
+                <div className="mt-1 overflow-hidden rounded-md border border-zinc-200">
+                  <SnippetView snippet={snippet} />
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-2 text-[10px] text-zinc-400">Each file imports the one below it; the change target is at the bottom.</p>
+    </div>
   );
 }
 
