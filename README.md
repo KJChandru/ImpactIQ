@@ -1,50 +1,58 @@
 # ImpactIQ
 
-**Architectural Impact Analyst** — Know what your feature will break before you write a single line of code.
+**Know what your change will break — before you write a line of code.**
 
-Built for the [Lyzr Builder Challenge](https://lyzr.ai) · Powered by Claude Sonnet 4.6 · GitAgent v0.1.7
+Point ImpactIQ at a GitHub repository, describe a change in plain English, and it predicts the blast radius: which files are affected, *why*, how risky it is, and which tests to write — every finding backed by a real file, symbol, and line you can click to verify.
+
+Powered by Claude Sonnet 4.6 · Next.js 16 · TypeScript
+
+---
+
+## 🔗 Live
+
+**https://impactiq-three.vercel.app**
+
+Click **“Try the demo”** on the landing page to see a full impact report instantly — no API key or setup needed.
 
 ---
 
 ## The Problem
 
-Engineers ship features that silently break other parts of the system. The blast radius isn't discovered until staging, or worse — production. Dependency graphs are complex, transitive, and impossible to reason about manually. ImpactIQ takes your architecture diagram and a plain-English feature description and instantly maps every module at risk, hidden transitive dependencies, a full test checklist, and deployment warnings.
+Engineers ship changes that silently break other parts of a codebase. The blast radius isn’t discovered until code review, staging, or — worse — production. Dependency chains are transitive and tedious to trace by hand.
 
----
-
-## Live Demo
-
-Live Demo: https://impactiq-three.vercel.app/
-
-Click **"Try the demo"** on the landing page to see a full OAuth migration impact report instantly — no API key needed.
+ImpactIQ reads the actual code, builds a dependency graph, and reasons about your proposed change against it — so you see the ripple effect up front, grounded in evidence rather than guesswork.
 
 ---
 
 ## How It Works
 
-ImpactIQ runs a three-phase AI pipeline:
+ImpactIQ runs a deterministic analysis pipeline and only hands a **bounded, evidence-backed** slice of the code to the AI. Facts come from the code; the model only interprets them.
 
 ```
-Ingestion → Decomposition → Diagnostic
+Intake → Index → Dependency graph → AI reasoning → Validation → Risk → Report
 ```
 
-| Phase | What happens |
-|-------|-------------|
-| **Ingestion** | Upload a Mermaid diagram or architecture image. Claude Vision or the local Mermaid parser extracts all modules and dependency edges into a structured graph. |
-| **Decomposition** | Describe your feature in plain English. Claude traces the dependency graph, computes which modules fall within the blast radius, and flags transitive risks you'd likely miss. |
-| **Diagnostic** | Full impact report: blast radius count, per-module severity with reasoning, hidden dependencies, an interactive test checklist with copy-all, and deployment risk warnings. |
+| Stage | What happens |
+|-------|--------------|
+| **Intake** | Fetch the repo (GitHub zipball or uploaded ZIP), read it **in memory — never executed**. `node_modules`, secrets, and binaries are stripped. |
+| **Index** | Parse every `.ts/.tsx/.js/.jsx` file with the **TypeScript Compiler API** into a real AST — files, exported symbols, and import/export edges with line numbers. |
+| **Dependency graph** | Build who-imports-what, then lexically match the change description to seed files and trace their transitive dependents (the blast radius). |
+| **AI reasoning** | Claude reasons over the bounded candidate set and proposes findings — each citing a file, symbol, and line. |
+| **Validation** | Every citation is checked against the index. Fabricated files are **rejected**; off-by-one symbols/lines are flagged. No hallucinated impacts. |
+| **Risk & tests** | A transparent 0–100 heuristic scores risk from named factors; test recommendations are tied to the impacted files. |
+| **Report** | Assembled into an interactive report, exportable as Markdown or JSON. |
 
-### SkillsFlow Pipeline
+---
 
-```yaml
-# workflows/impact-flow.yaml
-steps:
-  1. ingest_diagram    → extract modules + dependencies
-  2. validate_graph    → Zod schema validation
-  3. trace_blast       → Claude analyzes feature impact
-  4. surface_risks     → hidden deps + deployment risks
-  5. generate_tests    → per-module test checklist
-```
+## Features
+
+- **Evidence-backed findings** — every impact cites a real file / symbol / line, verified against the AST. Fabrications are dropped.
+- **Clear impact classification** — findings are graph-derived into **Direct**, **Indirect**, and **Potential**, with a one-line reason for each (confidence is a separate axis).
+- **Clickable dependency paths** — for every indirect finding, see the import chain from the file down to the change target, with each hop openable to its source.
+- **Repository health summary** — files, symbols, imports, tests, plus skipped files and unresolved imports, so you know how complete the analysis was.
+- **Blast-radius graph** — a visual map of how the change spreads, laid out by import hops.
+- **Risk score & recommended tests** — a documented heuristic, not a black box.
+- **Sample demo mode** — try the full report flow instantly on a prepared sample repo, no API key required.
 
 ---
 
@@ -55,31 +63,11 @@ steps:
 | Framework | Next.js 16 (App Router) |
 | Language | TypeScript |
 | AI Model | Claude Sonnet 4.6 (`claude-sonnet-4-6`) |
-| State | Zustand |
+| Code analysis | TypeScript Compiler API (AST) |
+| Repo intake | `fflate` (in-memory ZIP) |
 | Validation | Zod |
-| Agent | GitAgent v0.1.7 |
-| Styling | Tailwind CSS v4 |
+| Styling | Tailwind CSS v4 · Inter |
 | Deployment | Vercel |
-
----
-
-## GitAgent Structure
-
-```
-impactiq/
-├── agent.yaml              ← GitAgent manifest (id, version, model, skills)
-├── SOUL.md                 ← Agent identity and personality
-├── RULES.md                ← Hard constraints (never hallucinate modules, etc.)
-├── skills/
-│   ├── EXTRACT_SKILL.md    ← Diagram ingestion skill
-│   ├── ANALYZE_SKILL.md    ← Blast radius analysis skill
-│   └── REPORT_SKILL.md     ← Report generation skill
-├── tools/
-│   ├── extract.yaml        ← MCP tool schema: POST /api/extract
-│   └── analyze.yaml        ← MCP tool schema: POST /api/analyze
-└── workflows/
-    └── impact-flow.yaml    ← 5-step SkillsFlow pipeline
-```
 
 ---
 
@@ -87,8 +75,8 @@ impactiq/
 
 ```bash
 # 1. Clone
-git clone https://github.com/<your-username>/impactiq.git
-cd impactiq
+git clone https://github.com/KJChandru/ImpactIQ.git
+cd ImpactIQ
 
 # 2. Install
 npm install
@@ -100,7 +88,7 @@ echo "ANTHROPIC_API_KEY=sk-ant-..." > .env.local
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Click **"Try the demo"** to test without an API key.
+Open [http://localhost:3000](http://localhost:3000). Click **“Try the demo”** to explore a report without an API key.
 
 ---
 
@@ -109,63 +97,45 @@ Open [http://localhost:3000](http://localhost:3000). Click **"Try the demo"** to
 ```mermaid
 graph TD
   User([User]) --> FE[Next.js Frontend]
-  FE --> |Mermaid code| Extract[POST /api/extract]
-  FE --> |Image upload| Extract
-  Extract --> |Local parse| MP[Mermaid Parser]
-  Extract --> |Vision call| Claude[Claude Sonnet 4.6]
-  MP --> Arch[(Architecture JSON)]
-  Claude --> Arch
-  Arch --> FE
-  FE --> |Architecture + Feature| Analyze[POST /api/analyze]
-  Analyze --> Claude
-  Claude --> Report[(Impact Report)]
-  Report --> FE
-  FE --> |Renders| UI[Blast Radius / Impact Cards / Test Checklist / Deployment Risks]
+  FE --> |"GitHub URL + change"| API["POST /api/analyze-repo (NDJSON stream)"]
+  API --> Intake[Intake: fetch + strip]
+  Intake --> Index[Index: TS Compiler API → AST]
+  Index --> Graph[Dependency graph + retrieval]
+  Graph --> Reason[AI reasoning: Claude Sonnet 4.6]
+  Reason --> Validate[Evidence validation]
+  Validate --> Risk[Risk heuristic + test recs]
+  Risk --> Report[(Impact Report)]
+  Report --> |streamed progress + report| FE
+  FE --> |Renders| UI["Risk verdict · Direct/Indirect impact · Dependency paths · Blast-radius graph · Tests"]
 ```
 
 ---
 
 ## API Reference
 
-### `POST /api/extract`
+### `POST /api/analyze-repo`
 
-Extracts architecture from a diagram.
+Streams newline-delimited JSON (NDJSON) progress events, ending with the full report.
 
-```json
-// Request (Mermaid)
-{ "mermaid": "graph TD\n  A[Auth] --> B[(DB)]" }
-
-// Request (Image)
-{ "image": "<base64>", "mediaType": "image/png" }
-
-// Response
-{
-  "modules": ["Auth", "DB"],
-  "dependencies": [{ "from": "Auth", "to": "DB" }],
-  "confidence": 0.95
-}
-```
-
-### `POST /api/analyze`
-
-Computes full impact report.
-
-```json
+```jsonc
 // Request
 {
-  "architecture": { "modules": [...], "dependencies": [...] },
-  "feature": "Add OAuth 2.0 login with Google"
+  "githubUrl": "https://github.com/owner/repo",   // or "zipBase64": "<base64 .zip>"
+  "changeRequest": "Add a once() method that auto-removes the handler after the first call"
 }
 
-// Response
-{
-  "blastRadius": 4,
-  "impacted": [{ "module": "Auth", "severity": "high", "reason": "..." }],
-  "hiddenDeps": [{ "from": "Notifications", "to": "Auth", "risk": "..." }],
-  "tests": [{ "module": "Auth", "cases": ["..."] }],
-  "deploymentRisks": ["..."]
-}
+// Streamed events (one JSON object per line)
+{ "stage": "fetching", "source": "owner/repo" }
+{ "stage": "indexed", "fileCount": 42, "languages": ["typescript"] }
+{ "stage": "retrieved", "seeds": 1, "candidates": 12 }
+{ "stage": "reasoning" }
+{ "stage": "verifying" }
+{ "stage": "done", "report": { /* full RepoImpactReport */ } }
 ```
+
+The final `report` includes: `summary`, `risk` (level + score + factors), `findings` (grouped Direct/Indirect/Potential, each with evidence, a code snippet, and a dependency path), `testRecommendations`, `health`, `graph`, and `assumptions` / `limitations`.
+
+> Repositories are analyzed in memory and **never executed**; secrets and `node_modules` are stripped during intake.
 
 ---
 
