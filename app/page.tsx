@@ -4,7 +4,7 @@ import { useState } from "react";
 import { DependencyGraph } from "@/components/results/DependencyGraph";
 import { exportJson, exportMarkdown } from "@/lib/report-format";
 import { highlightLine, type TokenKind } from "@/lib/highlight";
-import type { CodeSnippet, ImpactKind, RepoHealth, ReportGraph, RepoImpactReport, ValidatedFinding } from "@/types";
+import type { CodeSnippet, ImpactKind, RepoHealth, RepoImpactReport, ValidatedFinding } from "@/types";
 
 type Phase = "input" | "loading" | "report";
 type Stage = "fetching" | "indexed" | "retrieved" | "reasoning" | "verifying" | "done";
@@ -25,10 +25,10 @@ const SEV_DOT: Record<string, string> = {
   low: "#a1a1aa",
 };
 
-const RISK: Record<string, string> = {
-  high: "bg-red-600 text-white",
-  medium: "bg-amber-500 text-white",
-  low: "bg-emerald-600 text-white",
+const RISK_DOT: Record<string, string> = {
+  high: "#ef4444",
+  medium: "#f59e0b",
+  low: "#10b981",
 };
 
 const EXAMPLE_REPOS = ["developit/mitt", "lukeed/clsx", "sindresorhus/yocto-queue"];
@@ -45,6 +45,9 @@ const TOKEN_CLASS: Record<TokenKind, string> = {
 
 const SEV_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
+const byStrength = (a: ValidatedFinding, b: ValidatedFinding) =>
+  SEV_RANK[a.severity] - SEV_RANK[b.severity] || SEV_RANK[a.confidence] - SEV_RANK[b.confidence];
+
 const IMPACT_DOT: Record<ImpactKind, string> = {
   direct: "bg-red-500",
   indirect: "bg-amber-500",
@@ -58,6 +61,7 @@ export default function Home() {
   const [report, setReport] = useState<RepoImpactReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress>({ stage: "fetching" });
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const hasSource = githubUrl.trim().length > 0;
   const canAnalyze = hasSource && changeRequest.trim().length > 0;
@@ -145,6 +149,8 @@ export default function Home() {
     setPhase("input");
     setReport(null);
     setError(null);
+    setGithubUrl("");
+    setChangeRequest("");
   }
 
   return (
@@ -162,15 +168,22 @@ export default function Home() {
               Repo analysis
             </span>
           </div>
-          {/* Diagram mode temporarily hidden — repo analysis is the primary flow.
-          <Link href="/diagram" className="text-xs text-zinc-500 hover:text-violet-600 transition-colors">
-            Diagram mode →
-          </Link>
-          */}
+          <button
+            onClick={() => setHelpOpen(true)}
+            aria-label="What is ImpactIQ?"
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-500 transition-colors hover:border-violet-300 hover:text-violet-700"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 1.978-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="hidden sm:inline">How it works</span>
+          </button>
         </div>
       </header>
 
-      <main className="flex-1 mx-auto w-full max-w-3xl px-4 sm:px-6 py-10">
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+
+      <main className={`flex-1 mx-auto w-full px-4 sm:px-6 py-10 ${phase === "report" ? "max-w-6xl" : "max-w-3xl"}`}>
         {phase === "input" && (
           <InputView
             githubUrl={githubUrl}
@@ -193,6 +206,76 @@ export default function Home() {
           Code is analyzed in memory and never executed · secrets &amp; <code>node_modules</code> stripped · every finding verified against the source
         </p>
       </footer>
+    </div>
+  );
+}
+
+const HELP_STEPS: { n: string; title: string; desc: string }[] = [
+  { n: "1", title: "Paste a GitHub repo", desc: "Any public repository URL. ImpactIQ reads the code in memory — it never runs it." },
+  { n: "2", title: "Describe your change", desc: "In plain English, say what you want to add or modify (name the feature, file, or method)." },
+  { n: "3", title: "Read the impact report", desc: "See which files will be affected, why, how risky it is, and which tests to write." },
+];
+
+function HelpModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/40 p-4 backdrop-blur-sm sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600">
+              <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </span>
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900">What is ImpactIQ?</h2>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-lg p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <p className="mt-4 text-sm leading-relaxed text-zinc-600">
+          Before you write any code, ImpactIQ tells you <b className="text-zinc-800">what a change might break</b>.
+          Point it at a codebase and describe what you want to do — it traces which files depend on each other and
+          shows you the ripple effect, with every finding backed by the real code so you can verify it yourself.
+        </p>
+
+        <div className="mt-5">
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">How to use it</div>
+          <ol className="flex flex-col gap-3">
+            {HELP_STEPS.map((s) => (
+              <li key={s.n} className="flex gap-3">
+                <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700">
+                  {s.n}
+                </span>
+                <div>
+                  <div className="text-sm font-semibold text-zinc-800">{s.title}</div>
+                  <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">{s.desc}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="mt-6 w-full rounded-xl bg-violet-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-violet-700"
+        >
+          Got it
+        </button>
+      </div>
     </div>
   );
 }
@@ -379,137 +462,312 @@ function Report({ report, onReset }: { report: RepoImpactReport; onReset: () => 
   const counts = { high: 0, medium: 0, low: 0 };
   for (const f of report.findings.filter(isConfident)) counts[f.severity]++;
 
+  const directItems = shown.filter((f) => f.impact === "direct").sort(byStrength);
+  const indirectItems = shown.filter((f) => f.impact === "indirect").sort(byStrength);
+  const potentialItems = shown.filter((f) => f.impact === "potential").sort(byStrength);
+  const affected = new Set(report.findings.filter(isConfident).map((f) => f.file)).size;
+
   return (
-    <section className="flex flex-col gap-5">
-      {/* Sticky summary */}
-      <div className="sticky top-14 z-[5] -mx-4 sm:-mx-6 flex items-center justify-between gap-3 border-b border-zinc-200 bg-slate-50/85 px-4 sm:px-6 py-2 backdrop-blur">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase ${RISK[report.risk.level]}`}>
-            {report.risk.level} · {report.risk.score}
-          </span>
-          <span className="truncate text-xs text-zinc-500">{report.changeRequest}</span>
-        </div>
-        <div className="flex flex-shrink-0 items-center gap-2">
-          <button onClick={() => download("impactiq-report.md", exportMarkdown(report), "text/markdown")} className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs transition-colors hover:border-violet-400 hover:text-violet-700">.md</button>
-          <button onClick={() => download("impactiq-report.json", exportJson(report), "application/json")} className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs transition-colors hover:border-violet-400 hover:text-violet-700">.json</button>
-          <button onClick={onReset} className="text-xs text-zinc-500 hover:text-violet-600 transition-colors">New</button>
-        </div>
-      </div>
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[clamp(260px,26%,320px)_1fr] lg:gap-8">
+      {/* ───────── LEFT RAIL ───────── */}
+      <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
+        <button
+          onClick={onReset}
+          className="group inline-flex items-center gap-1.5 self-start text-sm font-medium text-zinc-500 transition-colors hover:text-violet-700"
+        >
+          <span className="transition-transform group-hover:-translate-x-0.5">←</span> New analysis
+        </button>
 
-      {/* Sample-data banner */}
-      {isDemo && (
-        <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs text-violet-700">
-          <span className="rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">Demo</span>
-          <span>
-            This is a prepared <b>sample repository</b> — the full analysis flow ran on fixed demo data. Analyze your own repo above to see real results.
-          </span>
-        </div>
-      )}
-
-      {/* Repo summary */}
-      {report.repo && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-xs text-zinc-500">
-          <span className="font-medium text-zinc-700">{report.repo.name}</span>
-          <span>{report.repo.fileCount} files</span>
-          {report.repo.languages.length > 0 && <span>{report.repo.languages.join(", ")}</span>}
-          {report.retrieval.seeds.length > 0 && (
-            <span>seeds: {report.retrieval.seeds.map((s) => s.split("/").pop()).join(", ")}</span>
-          )}
-        </div>
-      )}
-
-      {/* Repository health */}
-      {report.health && <HealthSummary health={report.health} />}
-
-      {/* Honesty banner */}
-      {(weakRetrieval || truncated) && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {weakRetrieval && (
-            <p>⚠ Your description didn&apos;t strongly match any files, so this run may be incomplete. Try naming a specific feature, file, or symbol.</p>
-          )}
-          {truncated && <p>⚠ This repository is large and was truncated during indexing — some impacts may be missed.</p>}
-        </div>
-      )}
-
-      {/* Risk header */}
-      <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
-        <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${RISK[report.risk.level]}`}>
-          {report.risk.level} risk · {report.risk.score}/100
-        </span>
-        <p className="mt-3 text-sm leading-relaxed text-zinc-700">{report.summary}</p>
-        <p className="mt-2 text-[11px] text-zinc-400">{report.risk.note}</p>
-
-        <SeverityBar counts={counts} />
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          {report.risk.factors.map((f, i) => (
-            <span key={i} title={f.detail} className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] text-zinc-600">
-              {f.label}
-              {f.weight > 0 && <span className="text-zinc-400">+{f.weight}</span>}
+        {/* Verdict */}
+        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: RISK_DOT[report.risk.level] }} />
+            <span className="text-xs font-bold uppercase tracking-wide text-zinc-500">{report.risk.level} risk</span>
+          </div>
+          <div className="mt-2 flex items-baseline gap-1.5">
+            <span className="text-5xl font-bold tracking-tight" style={{ color: RISK_DOT[report.risk.level] }}>
+              {report.risk.score}
             </span>
-          ))}
+            <span className="text-sm text-zinc-400">/ 100</span>
+          </div>
+          <p className="mt-1 cursor-help text-[11px] text-zinc-400" title={report.risk.note}>
+            heuristic score — hover for details
+          </p>
+
+          <SeverityBar counts={counts} />
+
+          <dl className="mt-5 grid grid-cols-2 gap-4 border-t border-zinc-100 pt-4">
+            <Stat label="Files affected" value={affected} />
+            <Stat label="Blast radius" value={report.retrieval.blastRadius} />
+            <Stat label="Verified" value={`${report.stats.verified}/${report.stats.total}`} />
+            <Stat label="Coverage" value={`${Math.round(report.stats.evidenceCoverage * 100)}%`} />
+          </dl>
+          {report.stats.rejected > 0 && (
+            <p className="mt-3 text-[11px] font-medium text-red-600">{report.stats.rejected} fabricated claim(s) rejected</p>
+          )}
         </div>
-        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-zinc-500">
-          <span>Blast radius: {report.retrieval.blastRadius}</span>
-          <span>Evidence coverage: {Math.round(report.stats.evidenceCoverage * 100)}%</span>
-          <span>Verified: {report.stats.verified}/{report.stats.total}</span>
-          {report.stats.rejected > 0 && <span className="text-red-600">Fabrications rejected: {report.stats.rejected}</span>}
+
+        {/* Repository health */}
+        {report.health && <RailHealth health={report.health} />}
+
+        {/* Exports */}
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={() => download("impactiq-report.md", exportMarkdown(report), "text/markdown")} className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-600 transition-colors hover:border-violet-400 hover:text-violet-700">↓ Markdown</button>
+          <button onClick={() => download("impactiq-report.json", exportJson(report), "application/json")} className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-600 transition-colors hover:border-violet-400 hover:text-violet-700">↓ JSON</button>
         </div>
-      </div>
+      </aside>
 
-      {/* Dependency / blast-radius graph */}
-      {report.graph && report.graph.nodes.length > 0 && <GraphCard graph={report.graph} />}
+      {/* ───────── RIGHT PANE ───────── */}
+      <div className="flex min-w-0 flex-col gap-6">
+        {/* Header */}
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Impact report</div>
+          <h1 className="mt-1 text-xl font-semibold leading-snug tracking-tight text-zinc-900">{report.changeRequest}</h1>
+          {report.repo && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-xs text-zinc-400">
+              <span className="font-medium text-zinc-500">{report.repo.name}</span>
+              <span>·</span>
+              <span>{report.repo.fileCount} files</span>
+              {report.repo.languages.length > 0 && (
+                <>
+                  <span>·</span>
+                  <span>{report.repo.languages.join(", ")}</span>
+                </>
+              )}
+            </p>
+          )}
+          <p className="mt-4 text-sm leading-relaxed text-zinc-600">{report.summary}</p>
+        </div>
 
-      {shown.length > 0 && <ImpactLegend />}
+        {/* Banners */}
+        {isDemo && (
+          <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs text-violet-700">
+            <span className="flex-shrink-0 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">Demo</span>
+            <span>Prepared <b>sample repository</b> — the full analysis flow ran on fixed demo data.</span>
+          </div>
+        )}
+        {(weakRetrieval || truncated) && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {weakRetrieval && <p>⚠ Your description didn&apos;t strongly match any files, so this run may be incomplete. Try naming a specific feature, file, or symbol.</p>}
+            {truncated && <p>⚠ This repository is large and was truncated during indexing — some impacts may be missed.</p>}
+          </div>
+        )}
 
-      {(["direct", "indirect", "potential"] as ImpactKind[]).map((kind) => {
-        const items = shown
-          .filter((f) => f.impact === kind)
-          .sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || SEV_RANK[a.confidence] - SEV_RANK[b.confidence]);
-        if (items.length === 0) return null;
-        return (
-          <Card key={kind} title={`${cap(kind)} impact (${items.length})`}>
-            <ul className="flex flex-col gap-3">
-              {items.map((f, i) => (
-                <FindingRow key={`${f.file}-${i}`} f={f} index={i} githubBase={githubBase} pathSnippets={report.pathSnippets} />
+        {/* Impact findings */}
+        {shown.length > 0 ? (
+          <div className="flex flex-col gap-6">
+            <ImpactLegend />
+            {directItems.length > 0 && (
+              <Section title="Direct impact" count={directItems.length} dot="bg-red-500">
+                <FindingList items={directItems} githubBase={githubBase} pathSnippets={report.pathSnippets} />
+              </Section>
+            )}
+            {indirectItems.length > 0 && (
+              <Section title="Indirect impact" count={indirectItems.length} dot="bg-amber-500">
+                <FindingList items={indirectItems} githubBase={githubBase} pathSnippets={report.pathSnippets} />
+              </Section>
+            )}
+            {potentialItems.length > 0 && (
+              <Section title="Potential impact" count={potentialItems.length} dot="bg-zinc-400">
+                <FindingList items={potentialItems} githubBase={githubBase} pathSnippets={report.pathSnippets} />
+              </Section>
+            )}
+          </div>
+        ) : (
+          <p className="rounded-xl border border-dashed border-zinc-200 bg-white px-4 py-8 text-center text-sm text-zinc-400">
+            No confident impacts found for this change.
+          </p>
+        )}
+
+        {hidden.length > 0 && (
+          <button
+            onClick={() => setShowAll(!showAll)}
+            className="self-start text-xs font-medium text-violet-600 transition-colors hover:text-violet-700"
+          >
+            {showAll
+              ? "Hide speculative / low-confidence findings"
+              : `Show ${hidden.length} speculative / low-confidence finding${hidden.length > 1 ? "s" : ""} →`}
+          </button>
+        )}
+
+        {/* Recommended tests */}
+        {report.testRecommendations.length > 0 && (
+          <Section title="Recommended tests" count={report.testRecommendations.length}>
+            <ul className="flex flex-col divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white">
+              {report.testRecommendations.map((t, i) => (
+                <li key={i} className="px-4 py-3">
+                  <code className="text-xs font-medium text-zinc-800">{t.file}</code>
+                  <p className="mt-0.5 text-sm text-zinc-600">{t.why}</p>
+                  <p className="mt-0.5 text-[11px] text-zinc-400">{t.existingTest ? `covered by ${t.existingTest}` : "no existing test"}</p>
+                </li>
               ))}
             </ul>
-          </Card>
-        );
-      })}
+          </Section>
+        )}
 
-      {hidden.length > 0 && (
-        <button
-          onClick={() => setShowAll(!showAll)}
-          className="self-start text-xs text-zinc-500 hover:text-violet-600 transition-colors"
-        >
-          {showAll
-            ? "Hide speculative / low-confidence findings"
-            : `Show ${hidden.length} speculative / low-confidence finding${hidden.length > 1 ? "s" : ""} →`}
-        </button>
-      )}
+        {/* Blast-radius graph */}
+        {report.graph && report.graph.nodes.length > 0 && (
+          <Section title="Blast-radius graph" count={report.graph.nodes.length}>
+            <p className="mb-3 text-xs text-zinc-400">
+              How the change spreads — the target on the left, each column one import hop further out. Hover a file to trace connections.
+            </p>
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white p-3">
+              <DependencyGraph graph={report.graph} />
+            </div>
+          </Section>
+        )}
 
-      {report.testRecommendations.length > 0 && (
-        <Card title="Recommended tests">
-          <ul className="flex flex-col gap-2">
-            {report.testRecommendations.map((t, i) => (
-              <li key={i} className="text-sm">
-                <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs">{t.file}</code>
-                <span className="text-zinc-600"> — {t.why}</span>
-                <span className="text-[11px] text-zinc-400"> ({t.existingTest ? `covered by ${t.existingTest}` : "no existing test"})</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
+        {/* Assumptions & limitations */}
+        {(report.assumptions.length > 0 || report.limitations.length > 0) && (
+          <NotesCard assumptions={report.assumptions} limitations={report.limitations} />
+        )}
 
-      {report.assumptions.length > 0 && (
-        <Card title="Assumptions"><BulletList items={report.assumptions} /></Card>
-      )}
-      {report.limitations.length > 0 && (
-        <Card title="Limitations"><BulletList items={report.limitations} /></Card>
-      )}
+        {/* Back to start */}
+        <div className="pt-1">
+          <button
+            onClick={onReset}
+            className="w-full rounded-xl border border-zinc-200 bg-white px-5 py-2.5 text-sm font-medium text-zinc-600 shadow-sm transition-colors hover:border-violet-400 hover:text-violet-700"
+          >
+            ← Analyze another change
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div>
+      <dd className="text-xl font-semibold tabular-nums text-zinc-900">{value}</dd>
+      <dt className="mt-0.5 text-[10px] uppercase tracking-wide text-zinc-400">{label}</dt>
+    </div>
+  );
+}
+
+function Section({ title, count, dot, children }: { title: string; count?: number; dot?: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <div className="mb-3 flex items-center gap-2">
+        {dot && <span className={`h-2 w-2 rounded-full ${dot}`} />}
+        <h2 className="text-sm font-semibold text-zinc-800">{title}</h2>
+        {count != null && <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">{count}</span>}
+      </div>
+      {children}
     </section>
+  );
+}
+
+function FindingList({
+  items,
+  githubBase,
+  pathSnippets,
+}: {
+  items: ValidatedFinding[];
+  githubBase?: string;
+  pathSnippets?: Record<string, CodeSnippet>;
+}) {
+  return (
+    <ul className="flex flex-col gap-3">
+      {items.map((f, i) => (
+        <FindingRow key={`${f.file}-${i}`} f={f} index={i} githubBase={githubBase} pathSnippets={pathSnippets} />
+      ))}
+    </ul>
+  );
+}
+
+function RailHealth({ health }: { health: RepoHealth }) {
+  const [open, setOpen] = useState(false);
+  const rows: { label: string; value: number; warn?: boolean }[] = [
+    { label: "Files", value: health.filesIndexed },
+    { label: "Symbols", value: health.symbolsIndexed },
+    { label: "Imports", value: health.importsIndexed },
+    { label: "Tests", value: health.testFiles },
+    { label: "Unresolved", value: health.unresolvedImports, warn: health.unresolvedImports > 0 },
+    { label: "Skipped", value: health.skippedCount, warn: health.skippedCount > 0 },
+  ];
+  const hasDetails = health.warnings.length > 0 || health.skipped.length > 0;
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Repository health</span>
+        <span
+          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+            health.partial ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${health.partial ? "bg-amber-500" : "bg-emerald-500"}`} />
+          {health.partial ? "Partial" : "Complete"}
+        </span>
+      </div>
+      <dl className="mt-3 flex flex-col gap-1.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center justify-between text-xs">
+            <dt className="text-zinc-500">{r.label}</dt>
+            <dd className={`font-medium tabular-nums ${r.warn ? "text-amber-600" : "text-zinc-700"}`}>{r.value.toLocaleString()}</dd>
+          </div>
+        ))}
+      </dl>
+      {hasDetails && (
+        <div className="mt-3 border-t border-zinc-100 pt-2.5">
+          <button onClick={() => setOpen(!open)} className="text-[11px] font-medium text-violet-600 hover:text-violet-700">
+            {open ? "Hide" : "Show"} warnings &amp; skipped ({health.warnings.length + health.skipped.length})
+          </button>
+          {open && (
+            <div className="mt-2 flex flex-col gap-2">
+              {health.warnings.map((w, i) => (
+                <p key={i} className="flex gap-1.5 text-[11px] text-amber-700">
+                  <span>⚠</span>
+                  <span>{w}</span>
+                </p>
+              ))}
+              {health.skipped.length > 0 && (
+                <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+                  {health.skipped.map((s, i) => (
+                    <li key={i} className="text-[11px]">
+                      <code className="text-zinc-600">{s.path.split("/").pop()}</code>
+                      <span className="text-zinc-400"> — {s.reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NotesCard({ assumptions, limitations }: { assumptions: string[]; limitations: string[] }) {
+  const [open, setOpen] = useState(false);
+  const total = assumptions.length + limitations.length;
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center justify-between px-5 py-3.5">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Assumptions &amp; limitations</h2>
+        <span className="flex items-center gap-2 text-[11px]">
+          <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-zinc-500">{total}</span>
+          <span className="text-violet-600">{open ? "Hide" : "Show"}</span>
+        </span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-4 border-t border-zinc-100 px-5 py-4">
+          {assumptions.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-[11px] font-medium text-zinc-500">Assumptions</div>
+              <BulletList items={assumptions} />
+            </div>
+          )}
+          {limitations.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-[11px] font-medium text-zinc-500">Limitations</div>
+              <BulletList items={limitations} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -567,96 +825,6 @@ function ImpactLegend() {
             Category describes the relationship to the change; <b>confidence</b> (shown per finding) describes how sure the model is — the two are independent.
           </li>
         </ul>
-      )}
-    </div>
-  );
-}
-
-function HealthSummary({ health }: { health: RepoHealth }) {
-  const [open, setOpen] = useState(false);
-  const metrics: { label: string; value: number; warn?: boolean }[] = [
-    { label: "Files indexed", value: health.filesIndexed },
-    { label: "Symbols", value: health.symbolsIndexed },
-    { label: "Imports", value: health.importsIndexed },
-    { label: "Test files", value: health.testFiles },
-    { label: "Unresolved imports", value: health.unresolvedImports, warn: health.unresolvedImports > 0 },
-    { label: "Skipped files", value: health.skippedCount, warn: health.skippedCount > 0 },
-  ];
-  const hasDetails = health.warnings.length > 0 || health.skipped.length > 0;
-
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Repository health</h2>
-        <span
-          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-            health.partial ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"
-          }`}
-        >
-          <span className={`h-1.5 w-1.5 rounded-full ${health.partial ? "bg-amber-500" : "bg-emerald-500"}`} />
-          {health.partial ? "Partial analysis" : "Complete analysis"}
-        </span>
-      </div>
-
-      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-        {metrics.map((m) => (
-          <div key={m.label}>
-            <dt className="text-[11px] text-zinc-400">{m.label}</dt>
-            <dd className={`text-lg font-semibold tabular-nums ${m.warn ? "text-amber-600" : "text-zinc-800"}`}>
-              {m.value.toLocaleString()}
-            </dd>
-          </div>
-        ))}
-      </dl>
-
-      {hasDetails && (
-        <div className="mt-4 border-t border-zinc-100 pt-3">
-          <button onClick={() => setOpen(!open)} className="text-[11px] font-medium text-violet-600 hover:text-violet-700">
-            {open ? "Hide" : "Show"} warnings &amp; skipped files
-            {" "}({health.warnings.length + health.skipped.length})
-          </button>
-          {open && (
-            <div className="mt-3 flex flex-col gap-3">
-              {health.warnings.length > 0 && (
-                <ul className="flex flex-col gap-1">
-                  {health.warnings.map((w, i) => (
-                    <li key={i} className="flex gap-2 text-[11px] text-amber-700">
-                      <span>⚠</span>
-                      <span>{w}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {health.skipped.length > 0 && (
-                <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto">
-                  {health.skipped.map((s, i) => (
-                    <li key={i} className="flex items-baseline justify-between gap-3 text-[11px]">
-                      <code className="truncate text-zinc-600">{s.path}</code>
-                      <span className="flex-shrink-0 text-zinc-400">{s.reason}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function GraphCard({ graph }: { graph: ReportGraph }) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Blast-radius graph</h2>
-        <span className="text-[11px] text-violet-600">{open ? "Hide" : "Show"}</span>
-      </button>
-      {open && (
-        <div className="mt-3">
-          <DependencyGraph graph={graph} />
-        </div>
       )}
     </div>
   );
@@ -811,15 +979,6 @@ function DependencyPath({
         })}
       </ol>
       <p className="mt-2 text-[10px] text-zinc-400">Each file imports the one below it; the change target is at the bottom.</p>
-    </div>
-  );
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">{title}</h2>
-      {children}
     </div>
   );
 }
